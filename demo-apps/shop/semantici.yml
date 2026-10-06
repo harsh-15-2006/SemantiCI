@@ -1,0 +1,25 @@
+# Tells SemantiCI how to run this application and where its business state lives.
+name: demo-shop
+start: python -m uvicorn app:app --host 127.0.0.1 --port {port}
+health: /health
+openapi: /openapi.json
+database:
+  type: sqlite
+  path: shop.db
+env:
+  SHOP_DB: shop.db
+
+# Business scenarios SemantiCI executes before checking the business state.
+workflows:
+  - name: checkout
+    description: A customer adds products to the cart, checks out and pays.
+    steps:
+      - {method: GET, path: /products, expect_status: 200}
+      - {method: POST, path: /cart, json: {user_id: 1, product_id: 1, qty: 1}, expect_status: 200}
+      - {method: POST, path: /cart, json: {user_id: 1, product_id: 3, qty: 2}, expect_status: 200}
+      - {method: POST, path: /checkout, json: {user_id: 1}, expect_status: 200}
+  - name: second-customer-checkout
+    description: A different customer buys a single product.
+    steps:
+      - {method: POST, path: /cart, json: {user_id: 2, product_id: 2, qty: 3}, expect_status: 200}
+      - {method: POST, path: /checkout, json: {user_id: 2}, expect_status: 200}

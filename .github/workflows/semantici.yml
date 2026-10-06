@@ -1,0 +1,62 @@
+name: SemantiCI Pipeline
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bug:
+        description: Inject a business bug into the demo shop
+        type: choice
+        default: none
+        options: [none, skip_order, double_charge, no_stock_update]
+
+env:
+  SHOP_BUG: ${{ inputs.bug || 'none' }}
+
+jobs:
+  build-and-test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Unit tests (status codes only)
+        working-directory: demo-apps/shop
+        run: python -m pytest tests -q
+
+  business-gate:
+    name: Semantic verification (release gate)
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: SemantiCI business-correctness gate
+        run: python -m semantici.cli gate demo-apps/shop
+      - name: Regression tests generated from past violations
+        run: |
+          if ls demo-apps/shop/business_checks/test_*.py >/dev/null 2>&1; then
+            python -m pytest demo-apps/shop/business_checks -q
+          else
+            echo "No generated regression tests yet."
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semantici-report
+          path: semantici-report.json
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    needs: business-gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Business checks passed. Release approved."

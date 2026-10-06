@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Projects</h1>
+<p class="muted">Submit a project. SemantiCI analyzes it, proposes business invariants, verifies the real
+business state after running its workflows, and blocks the release on a critical violation.</p>
+
+<div class="card">
+  <h2>Submit a project</h2>
+  <form method="post" action="/projects">
+    <div class="row">
+      <div><label>Git repository URL (or a local folder)</label>
+        <input type="text" name="source" placeholder="https://github.com/user/repo" required></div>
+      <div><label>Application folder inside the repository (optional)</label>
+        <input type="text" name="subdir" placeholder="demo-apps/shop"></div>
+      <div><label>Project name (optional)</label>
+        <input type="text" name="name" placeholder="Demo Shop"></div>
+    </div>
+    <p class="small muted">Supported in this prototype: a web application with a <code>semantici.yml</code> file
+      (start command, health URL, SQLite database path).</p>
+    <button class="primary" type="submit">Submit project</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Submitted projects</h2>
+  {% if projects %}
+  <table>
+    <tr><th>Project</th><th>Source</th><th>Analysis</th><th>Release status</th></tr>
+    {% for p in projects %}
+    <tr>
+      <td><a href="/projects/{{ p.id }}"><b>{{ p.name }}</b></a></td>
+      <td class="small">{{ p.source }}{% if p.subdir %} / {{ p.subdir }}{% endif %}</td>
+      <td class="small">{{ p.analysis_method or "not analyzed" }}</td>
+      <td>{% if p.last_decision %}<span class="tag {{ p.last_decision }}">{{ p.last_decision }}</span>{% else %}<span class="muted small">no runs yet</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">No projects yet.</p>{% endif %}
+</div>
+
+<p class="small muted">Analysis engine:
+  {% if llm %}LLM ({{ llm }}, model {{ model }}){% else %}schema rules (no LLM API key configured){% endif %}</p>
+{% endblock %}

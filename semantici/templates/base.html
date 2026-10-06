@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SemantiCI{% endblock %}</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c2330; --muted:#677084; --line:#dfe3ea; --brand:#2f4ea3;
+          --ok:#1d7f4c; --ok-bg:#e5f5ec; --bad:#b3261e; --bad-bg:#fbe9e7; --warn:#8a5a00; --warn-bg:#fdf1d8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--ink); color:#fff; padding:14px 24px; display:flex; align-items:baseline; gap:14px; }
+  header a { color:#fff; text-decoration:none; font-size:20px; font-weight:600; }
+  header span { color:#aab3c5; font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:24px; margin:0 0 4px; } h2 { font-size:17px; margin:0 0 12px; } h3 { font-size:15px; margin:0 0 6px; }
+  .muted { color:var(--muted); } .small { font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; margin:16px 0; }
+  .msg { background:#e8eefc; border:1px solid #c4d2f5; border-radius:8px; padding:10px 14px; margin:16px 0; }
+  table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  input[type=text], textarea, select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  textarea { font-family:Consolas, monospace; font-size:13px; min-height:90px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  button { font:inherit; padding:7px 14px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.ok { color:var(--ok); border-color:var(--ok); } button.bad { color:var(--bad); border-color:var(--bad); }
+  button.sm { padding:3px 10px; font-size:13px; }
+  form.inline { display:inline; }
+  pre { background:#111827; color:#e5e7eb; padding:12px; border-radius:6px; overflow-x:auto; font:13px/1.45 Consolas, monospace; margin:8px 0; white-space:pre-wrap; }
+  code { font-family:Consolas, monospace; font-size:13px; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .critical { background:var(--bad-bg); color:var(--bad); } .high { background:var(--warn-bg); color:var(--warn); }
+  .medium, .low, .candidate { background:#eceff4; color:#4a5468; }
+  .approved, .PASS { background:var(--ok-bg); color:var(--ok); } .rejected, .BLOCKED { background:var(--bad-bg); color:var(--bad); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; }
+  .stat { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .banner { border-radius:8px; padding:16px 20px; font-size:20px; font-weight:700; margin:16px 0; }
+  .banner.PASS { border:1px solid var(--ok); background:var(--ok-bg); color:var(--ok); } .banner.BLOCKED { border:1px solid var(--bad); background:var(--bad-bg); color:var(--bad); }
+  .banner a { margin-left:12px; }
+  .stages { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  .stage { padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:#fff; font-size:14px; }
+  .stage.good { border-color:var(--ok); color:var(--ok); } .stage.fail { border-color:var(--bad); color:var(--bad); background:var(--bad-bg); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; } .row > div { flex:1; min-width:200px; }
+  details summary { cursor:pointer; color:var(--brand); font-size:13px; }
+  .violation { border-left:4px solid var(--bad); }
+  a { color:var(--brand); }
+</style>
+</head>
+<body>
+<header><a href="/">SemantiCI</a><span>Business-correctness release gate</span></header>
+<main>
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
