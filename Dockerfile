@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# git is needed to clone submitted repositories
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# git clones submitted repositories; Node.js and a compiler let SemantiCI install and run submitted apps
+RUN apt-get update && apt-get install -y --no-install-recommends git nodejs npm build-essential && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .

@@ -20,6 +20,25 @@
   <div class="stat"><b>{{ stats.critical if stats else 0 }}</b><span>Critical violations</span></div>
 </div>
 
+{% if setup %}
+<div class="card">
+  <h2>0. Run configuration {% if setup.status == "ready" %}<span class="tag approved">ready</span>{% elif setup.status == "failed" %}<span class="tag rejected">failed</span>{% else %}<span class="tag candidate">proposed</span>{% endif %}</h2>
+  <p class="small muted">This repository has no <code>semantici.yml</code>, so SemantiCI worked out how to install and
+    start it ({{ setup.method }}). Check it, correct it if needed, then install and start.</p>
+  {% if setup.summary %}<p>{{ setup.summary }}</p>{% endif %}
+  {% if setup.supported == false %}<p><b>Outside the supported scope:</b> {{ setup.reason }}</p>{% endif %}
+  {% if setup.suggestion and setup.status == "failed" %}<p class="small"><b>The configuration below is a corrected proposal based on the error.</b></p>{% endif %}
+  {% if setup.status == "ready" %}<details><summary>View / change configuration</summary>{% endif %}
+  <form method="post" action="/projects/{{ project.id }}/setup">
+    <textarea name="yaml" style="min-height:220px">{{ setup.yaml }}</textarea>
+    <p><button class="primary" type="submit">Install and start</button>
+      <span class="small muted">Installs dependencies in an isolated environment and starts the app once. This can take a few minutes.</span></p>
+  </form>
+  {% if setup.status == "ready" %}</details>{% endif %}
+  {% if setup.log %}<details {% if setup.status == "failed" %}open{% endif %}><summary>Setup log</summary><pre>{{ setup.log }}</pre></details>{% endif %}
+</div>
+{% endif %}
+
 <div class="card">
   <h2>1. Analyze the application</h2>
   <form class="inline" method="post" action="/projects/{{ project.id }}/analyze">

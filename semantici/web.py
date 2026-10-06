@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, quote
 
+import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
@@ -16,8 +17,9 @@ from fastapi.templating import Jinja2Templates
 
 from . import llm, store
 from .analyzer import SEVERITIES, _slug, analyze
-from .apprunner import AppStartError, db_path_for, load_config
+from .apprunner import CONFIG_NAME, AppStartError, load_config, resolve_db
 from .harness import SUITE_DIR, execute_suite, save_suite
+from .onboard import normalize, prepare, propose_config, to_yaml, try_start, write_config
 from .testgen import write_regression_test
 from .verifier import sql_error
 
@@ -43,6 +45,19 @@ def get_project(project_id: int) -> dict:
     if not project:
         raise HTTPException(404, "project not found")
     return project
+
+
+def setup_of(project: dict):
+    return json.loads(project["setup_json"]) if project.get("setup_json") else None
+
+
+def not_ready(project: dict) -> bool:
+    setup = setup_of(project)
+    return bool(setup) and setup.get("status") != "ready"
+
+
+def app_db(project: dict):
+    return resolve_db(project["app_dir"], load_config(project["app_dir"]))
 
 
 def approved(project_id: int):
@@ -91,15 +106,68 @@ async def create_project(request: Request):
                 capture_output=True, text=True, timeout=300)
             if clone.returncode != 0:
                 raise AppStartError(f"git clone failed: {clone.stderr.strip()[-300:]}")
-        app_dir = (root / subdir).resolve()
-        load_config(app_dir)
+        base = (root / subdir).resolve()
+        if not base.is_dir():
+            raise AppStartError(f"folder '{subdir}' does not exist in the repository")
+        setup = None
+        if (base / CONFIG_NAME).exists():
+            load_config(base)
+            app_dir = base
+        else:
+            proposal = await run_in_threadpool(propose_config, base)
+            app_dir = (base / proposal["config"]["app_dir"]).resolve()
+            setup = {"status": "proposed", "yaml": to_yaml(proposal["config"]), "log": "",
+                     **{k: proposal.get(k, "") for k in ("summary", "supported", "reason", "method")}}
     except (AppStartError, subprocess.TimeoutExpired, OSError) as e:
         return RedirectResponse("/?msg=" + quote(f"Could not add project: {e}"), status_code=303)
-    name = data.get("name") or app_dir.name
+    name = data.get("name") or re.split(r"[/\\]", source.rstrip("/\\"))[-1].removesuffix(".git") or app_dir.name
     project_id = store.run(
-        "INSERT INTO projects(name, source, subdir, mode, app_dir) VALUES (?, ?, ?, ?, ?)",
-        name, source, subdir, mode, str(app_dir))
+        "INSERT INTO projects(name, source, subdir, mode, app_dir, root, setup_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        name, source, subdir, mode, str(app_dir), str(base), json.dumps(setup) if setup else None)
+    if setup:
+        return back(project_id, "Repository cloned. Review the proposed run configuration, then click Install and start.")
     return back(project_id, "Project added. Click Analyze to discover workflows and candidate invariants.")
+
+
+def _setup_project(project: dict, text: str) -> tuple:
+    """Applies a run configuration: writes it, installs dependencies and proves the app starts."""
+    setup = dict(setup_of(project) or {}, yaml=text, suggestion=False)
+    try:
+        cfg = normalize(yaml.safe_load(text))
+    except yaml.YAMLError as e:
+        return dict(setup, status="failed", log=f"The configuration is not valid YAML: {e}"), None
+    root = Path(project["root"] or project["app_dir"])
+    app_dir = (root / cfg["app_dir"]).resolve()
+    if not cfg["start"]:
+        return dict(setup, status="failed", log="The configuration needs a start command."), None
+    if not app_dir.is_dir():
+        return dict(setup, status="failed", log=f"app_dir '{cfg['app_dir']}' does not exist in the repository."), None
+    write_config(app_dir, cfg)
+    ok, log = prepare(app_dir, cfg)
+    if ok:
+        ok, start_log = try_start(app_dir)
+        log += "\n" + start_log
+    if ok:
+        return dict(setup, status="ready", log=log[-3000:]), str(app_dir)
+    setup.update(status="failed", log=log[-3000:])
+    if llm.provider():  # ask the LLM for a corrected proposal; the user still has to confirm it
+        fixed = propose_config(root, feedback=log, previous=text)
+        if fixed["config"]["start"] and to_yaml(fixed["config"]) != text:
+            setup.update(yaml=to_yaml(fixed["config"]), suggestion=True)
+    return setup, None
+
+
+@app.post("/projects/{project_id}/setup")
+async def setup_project(request: Request, project_id: int):
+    project = get_project(project_id)
+    data = await form(request)
+    setup, app_dir = await run_in_threadpool(_setup_project, project, data.get("yaml", ""))
+    store.run("UPDATE projects SET setup_json = ?, app_dir = ? WHERE id = ?",
+              json.dumps(setup), app_dir or project["app_dir"], project_id)
+    if setup["status"] == "ready":
+        return back(project_id, "The application installs and starts. Click Analyze.")
+    hint = " A corrected configuration is proposed below; review it and try again." if setup.get("suggestion") else ""
+    return back(project_id, "Setup failed. See the log below." + hint)
 
 
 @app.get("/projects/{project_id}")
@@ -127,7 +195,7 @@ def project_page(request: Request, project_id: int, msg: str = ""):
     return templates.TemplateResponse(request, "project.html", {
         "project": project, "invariants": invariants, "workflows": workflows, "runs": runs, "stats": stats,
         "analysis": json.loads(project["analysis_json"] or "{}"), "severities": SEVERITIES, "msg": msg,
-        "suite_dir": SUITE_DIR,
+        "suite_dir": SUITE_DIR, "setup": setup_of(project),
         "counts": {s: sum(1 for i in invariants if i["status"] == s) for s in ("approved", "candidate", "rejected")},
     })
 
@@ -135,6 +203,8 @@ def project_page(request: Request, project_id: int, msg: str = ""):
 @app.post("/projects/{project_id}/analyze")
 async def analyze_project(project_id: int):
     project = get_project(project_id)
+    if not_ready(project):
+        return back(project_id, "Finish step 0 (install and start) first.")
     try:
         result = await run_in_threadpool(analyze, project["app_dir"])
     except AppStartError as e:
@@ -171,8 +241,8 @@ async def add_invariant(request: Request, project_id: int):
     data = await form(request)
     if not data.get("description") or not data.get("check_sql"):
         return back(project_id, "A description and a check SQL are both required.")
-    db_path = db_path_for(project["app_dir"], load_config(project["app_dir"]))
-    if not db_path.exists():
+    db_path = app_db(project)
+    if not db_path:
         return back(project_id, "Run Analyze first so the application database exists.")
     error = sql_error(db_path, data["check_sql"])
     if error:
@@ -202,8 +272,8 @@ async def update_invariant(request: Request, invariant_id: int):
     if data.get("status") in ("approved", "rejected", "candidate"):
         store.run("UPDATE invariants SET status = ? WHERE id = ?", data["status"], invariant_id)
     if "check_sql" in data:
-        db_path = db_path_for(project["app_dir"], load_config(project["app_dir"]))
-        error = sql_error(db_path, data["check_sql"])
+        db_path = app_db(project)
+        error = sql_error(db_path, data["check_sql"]) if db_path else "the application database was not found"
         if error:
             return back(project["id"], f"Edit not saved, the SQL is invalid: {error}")
         severity = data.get("severity") if data.get("severity") in SEVERITIES else inv["severity"]

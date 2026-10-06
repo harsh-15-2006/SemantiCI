@@ -23,10 +23,13 @@ def execute_suite(app_dir, workflows, invariants, env=None) -> dict:
     try:
         for wf in workflows:
             report["workflows"].append(run_workflow(app.base_url, wf))
+        db_path = app.db_path
         for inv in invariants:
             entry = {k: inv.get(k) for k in ("key", "description", "severity", "check_sql", "gwt")}
             try:
-                entry["violations"] = check(app.db_path, inv["check_sql"])
+                if not db_path:
+                    raise RuntimeError("no SQLite database was found for this application")
+                entry["violations"] = check(db_path, inv["check_sql"])
                 entry["passed"] = not entry["violations"]
             except Exception as e:  # a broken check must not hide the other results
                 entry.update(violations=[], passed=False, error=str(e))
@@ -58,6 +61,7 @@ def run_check(app_dir, workflows, check_sql, env=None) -> list:
         for wf in workflows:
             result = run_workflow(app.base_url, wf)
             assert result["ok"], f"scenario '{result['name']}' could not be completed: {result['steps'][-1:]}"
+        assert app.db_path, "no SQLite database was found for this application"
         return check(app.db_path, check_sql)
     finally:
         stop_app(app)

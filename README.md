@@ -12,16 +12,33 @@ into a regression test for future pipeline runs.
 
 This is a working prototype, not the full platform.
 
-| Supported now | Not built yet (future work) |
+| Supported now | Not supported (future work) |
 |---|---|
-| Project submitted as a Git URL or local folder | Automatic build of any language without configuration |
-| Apps that include a `semantici.yml` (start command, health URL, database path) | Driving the application through its UI |
-| SQLite application databases | PostgreSQL / MySQL |
-| Workflows executed through HTTP | Kubernetes deployment, monitoring |
-| Candidate invariants from an LLM, or from schema rules when no key is set | Evaluation on many applications |
+| Any Git URL or local folder; no configuration file needed | Languages other than Python and Node.js |
+| Python web apps (FastAPI, Flask, Django) and Node.js web apps (Express) | Apps whose data is in PostgreSQL, MySQL, MongoDB, Firebase or memory |
+| Apps that keep their data in SQLite (the file is found automatically) | Apps that need real secrets, paid services or third-party logins |
+| Workflows through HTTP, including token and cookie logins | Driving the application through its browser UI |
+| Run configuration, workflows and invariants proposed by an LLM, confirmed by a person | Old projects whose dependencies no longer install |
 
-SemantiCI runs the start command from the submitted repository on the local
-machine, so only submit repositories you trust.
+### Auto-onboarding
+
+When a repository has no `semantici.yml`, SemantiCI reads the repository and proposes how to
+install and start it. The user confirms or edits that proposal, SemantiCI installs the
+dependencies in an isolated environment and starts the app once. If that fails, the error is
+sent back to the LLM for a corrected proposal. Proposed workflows are dry-run against the
+running app and repaired once if a step fails.
+
+Tested on public repositories on 2026-10-07 (inside the Docker container):
+
+| Repository | Stack | Result |
+|---|---|---|
+| madhulathahl/Basic-Banking-Application | FastAPI, SQLAlchemy, JWT | Full flow completed |
+| vakitisahana-alt/E-Commerce-REST-API | Flask | Full flow completed |
+| IMRANDIL/Express_SQLite_Rest_Api | Node.js, Express, Sequelize | Full flow completed |
+| masfranzhuo/sequalize-express-SQLite | Node.js, 2017 dependencies | Failed: its sqlite3 package does not build on Node 20 |
+
+SemantiCI runs code from the submitted repository. Run SemantiCI in Docker so that code is
+contained, and only submit repositories you are willing to run.
 
 ## How it works
 

@@ -64,6 +64,12 @@ def init():
     con = _connect()
     try:
         con.executescript(SCHEMA)
+        for column in ("root TEXT", "setup_json TEXT"):  # added after the first version
+            try:
+                con.execute(f"ALTER TABLE projects ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass
+        con.commit()
     finally:
         con.close()
 

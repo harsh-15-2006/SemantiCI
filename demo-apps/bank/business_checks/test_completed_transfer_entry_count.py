@@ -2,7 +2,7 @@
 
 Invariant : completed-transfer-entry-count (high)
 Rule      : Every completed transfer must have exactly two ledger entries (one debit and one credit).
-Origin    : violation confirmed in SemantiCI run #6 on 2026-10-06
+Origin    : violation confirmed in SemantiCI run #12 on 2026-10-06
 """
 from pathlib import Path
 

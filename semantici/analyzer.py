@@ -6,6 +6,7 @@ key is configured, otherwise from schema rules. Either way they are only
 candidates until a person approves them.
 """
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -13,11 +14,15 @@ from pathlib import Path
 import httpx
 
 from . import llm
-from .apprunner import load_config, start_app, stop_app
+from .apprunner import SKIP_DIRS as RUN_SKIP_DIRS
+from .apprunner import AppStartError, load_config, start_app, stop_app
+from .runner import STEP_KEYS, run_workflow
 from .verifier import sql_error
 
 SOURCE_EXT = {".py", ".js", ".ts", ".java", ".go", ".rb", ".php"}
-SKIP_DIRS = {"node_modules", ".git", "venv", ".venv", "__pycache__", "tests", "test", "business_checks", "dist", "build"}
+SKIP_DIRS = RUN_SKIP_DIRS | {"tests", "test", "business_checks", "migrations", "static", "public", "assets"}
+HOT_WORDS = re.compile(r"@app\.|@router\.|app\.(get|post|put|delete)\(|router\.(get|post|put|delete)\(|urlpatterns|"
+                       r"CREATE TABLE|db\.Model|models\.Model|Base\)|sequelize\.define|INSERT INTO|UPDATE |\.commit\(", re.IGNORECASE)
 SUCCESS_WORDS = ("SUCCESS", "SUCCEEDED", "PAID", "COMPLETED", "CONFIRMED", "APPROVED")
 AMOUNT_COLUMNS = {"stock", "balance", "quantity", "qty", "amount", "price", "total"}
 SEVERITIES = ("critical", "high", "medium", "low")
@@ -50,17 +55,22 @@ def introspect(db_path) -> list:
     return tables
 
 
-def collect_source(app_dir, limit=40000) -> str:
+def collect_source(app_dir, limit=45000) -> str:
+    """Source code for the LLM, most relevant files (routes, models, SQL) first."""
+    scored = []
+    for folder, dirs, files in os.walk(app_dir):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+        for name in files:
+            path = Path(folder) / name
+            if path.suffix not in SOURCE_EXT or path.stat().st_size > 200_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            scored.append((len(HOT_WORDS.findall(text)), path, text))
     parts, used = [], 0
-    for path in sorted(Path(app_dir).rglob("*")):
-        if not path.is_file() or path.suffix not in SOURCE_EXT:
-            continue
-        if SKIP_DIRS & set(path.relative_to(app_dir).parts):
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        chunk = f"\n### FILE: {path.relative_to(app_dir).as_posix()}\n{text}"
+    for _score, path, text in sorted(scored, key=lambda x: (-x[0], len(x[1].parts))):
+        chunk = f"\n### FILE: {Path(path).relative_to(app_dir).as_posix()}\n{text[:12000]}"
         if used + len(chunk) > limit:
-            break
+            continue
         parts.append(chunk)
         used += len(chunk)
     return "".join(parts)
@@ -136,8 +146,18 @@ Rules:
 - Use only the tables and columns in the schema below.
 - Cover cross-table consistency: money vs orders, duplicates, inventory or balance conservation, totals that must match.
 - critical = money or orders are wrong; high = data inconsistency; medium/low = hygiene.
-- Workflows must be complete user journeys that end in a business transaction, using only
-  endpoints that exist and ids present in the sample rows. Propose at most 3 workflows.
+- Workflows must be complete user journeys that end in a business transaction (something is
+  bought, booked, paid, transferred, created), using only endpoints that exist in the source code.
+  Propose 1 to 3 workflows.
+- Step fields: "method", "path", then "json" for a JSON body OR "data" for a form-encoded body,
+  optional "params" (query string), "headers", "expect_status", "save".
+- Workflows run one after another, starting from a database containing only the sample rows shown
+  below. If a workflow needs a user or other records that are not in the sample rows, create them
+  in earlier steps, and use a different user name / email in each workflow.
+- If endpoints need authentication: register and/or log in first. Cookies are kept automatically.
+  For tokens use "save": {{"token": "access_token"}} (dotted paths like "data.token" work) and then
+  "headers": {{"Authorization": "Bearer {{{{token}}}}"}}.
+- To reuse an id created by an earlier step: "save": {{"order_id": "id"}} and later "/orders/{{{{order_id}}}}".
 - Propose between 4 and 10 invariants. Do not invent rules the code does not imply.
 
 DATABASE SCHEMA (with sample rows):
@@ -185,10 +205,62 @@ def _clean_workflows(raw) -> list:
     for w in raw or []:
         if not isinstance(w, dict) or not isinstance(w.get("steps"), list) or not w["steps"]:
             continue
-        steps = [s for s in w["steps"] if isinstance(s, dict) and s.get("path")]
+        steps = [{k: s[k] for k in STEP_KEYS if s.get(k) is not None}
+                 for s in w["steps"] if isinstance(s, dict) and s.get("path")]
         if steps:
             out.append({"name": _slug(w.get("name") or "workflow"),
                         "description": str(w.get("description", "")), "steps": steps})
+    return out
+
+
+REPAIR = """
+
+YOUR PREVIOUS WORKFLOWS WERE EXECUTED AGAINST THE RUNNING APPLICATION AND SOME FAILED:
+{failures}
+
+Return ONLY JSON in the shape {{"workflows": [...]}} containing corrected versions of ALL workflows.
+"""
+
+
+def _dry_run(app_dir, cfg, env, workflows) -> list:
+    app = start_app(app_dir, cfg, env)
+    try:
+        return [run_workflow(app.base_url, w) for w in workflows]
+    finally:
+        stop_app(app)
+
+
+def _validated_workflows(app_dir, cfg, env, prompt, workflows, notes) -> list:
+    """Dry-runs LLM-proposed workflows and lets the LLM repair them once if any step fails."""
+    for attempt in range(2):
+        try:
+            results = _dry_run(app_dir, cfg, env, workflows)
+        except AppStartError as e:
+            notes.append(f"Proposed workflows could not be dry-run: {e}")
+            return [dict(w, validated=False) for w in workflows]
+        failed = [r for r in results if not r["ok"]]
+        if not failed or attempt == 1:
+            break
+        failures = "\n".join(
+            f"- workflow '{r['name']}' failed at step {len(r['steps'])} "
+            f"({r['steps'][-1]['method']} {r['steps'][-1]['path']}): HTTP {r['steps'][-1]['status']}, "
+            f"response {json.dumps(r['steps'][-1]['response'], default=str)[:400]}" for r in failed)
+        try:
+            reply = llm.complete_json(prompt + "\nPREVIOUS WORKFLOWS:\n" + json.dumps(workflows)
+                                      + REPAIR.format(failures=failures))
+            repaired = _clean_workflows(reply.get("workflows"))
+        except Exception as e:
+            notes.append(f"Workflow repair failed ({type(e).__name__}).")
+            break
+        if not repaired:
+            break
+        workflows = repaired
+        notes.append(f"{len(failed)} proposed workflow(s) failed a dry run and were sent back to the LLM for repair.")
+    out = []
+    for wf, result in zip(workflows, results):
+        last = result["steps"][-1] if result["steps"] else {}
+        status = "dry run passed" if result["ok"] else f"dry run FAILED at {last.get('method')} {last.get('path')} (HTTP {last.get('status')})"
+        out.append(dict(wf, validated=result["ok"], description=f"{wf.get('description', '')} [{status}]".strip()))
     return out
 
 
@@ -204,9 +276,21 @@ def analyze(app_dir, env=None) -> dict:
                 openapi = r.json()
         except (httpx.HTTPError, ValueError):
             pass
-        tables = introspect(app.db_path)
+        if not app.db_path:  # some apps create their database on the first request
+            for path in ["/"] + [p for p in (openapi.get("paths") or {}) if "{" not in p][:8]:
+                try:
+                    httpx.get(app.base_url + path, timeout=10)
+                except httpx.HTTPError:
+                    pass
+        db_path = app.db_path
+        tables = introspect(db_path) if db_path else []
     finally:
         stop_app(app)
+    if not tables:
+        raise AppStartError(
+            "The application started, but no SQLite database with tables was found in the repository. "
+            "It may keep its data in memory or in another database (MongoDB, PostgreSQL, MySQL), "
+            "which this prototype cannot verify. If it does use SQLite, set database.path in the run configuration.")
 
     notes = []
     repo_workflows = [dict(w, source="repo") for w in _clean_workflows(cfg.get("workflows"))]
@@ -215,16 +299,19 @@ def analyze(app_dir, env=None) -> dict:
 
     if llm.provider():
         try:
-            reply = llm.complete_json(PROMPT.format(
+            prompt = PROMPT.format(
                 schema=json.dumps(tables, indent=1, default=str),
                 openapi=json.dumps(openapi)[:15000],
                 source=collect_source(app_dir),
-            ))
-            candidates = _clean_candidates(reply.get("invariants"), app.db_path, notes)
+            )
+            reply = llm.complete_json(prompt)
+            candidates = _clean_candidates(reply.get("invariants"), db_path, notes)
             if candidates:
-                llm_workflows = [dict(w, source="llm") for w in _clean_workflows(reply.get("workflows"))]
+                llm_workflows = _clean_workflows(reply.get("workflows"))
+                if llm_workflows:
+                    llm_workflows = _validated_workflows(app_dir, cfg, env, prompt, llm_workflows, notes)
                 result.update(method=f"llm ({llm.provider()}: {llm.model_name()})", invariants=candidates,
-                              workflows=repo_workflows + llm_workflows)
+                              workflows=repo_workflows + [dict(w, source="llm") for w in llm_workflows])
                 return result
             notes.append("The LLM returned no usable invariants; used schema rules instead.")
         except Exception as e:
@@ -232,6 +319,9 @@ def analyze(app_dir, env=None) -> dict:
     else:
         notes.append("No LLM API key configured; candidates were derived from the database schema by rules.")
 
+    if not repo_workflows:
+        notes.append("No workflows are available: the repository does not define any, and proposing them needs the LLM. "
+                     "Click Re-analyze to try the LLM again.")
     result.update(method="schema rules", workflows=repo_workflows,
-                  invariants=_clean_candidates(rule_candidates(tables), app.db_path, notes))
+                  invariants=_clean_candidates(rule_candidates(tables), db_path, notes))
     return result

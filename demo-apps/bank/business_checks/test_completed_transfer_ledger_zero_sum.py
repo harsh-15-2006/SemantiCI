@@ -2,7 +2,7 @@
 
 Invariant : completed-transfer-ledger-zero-sum (high)
 Rule      : The sum of ledger entry deltas for any transfer must equal zero.
-Origin    : violation confirmed in SemantiCI run #6 on 2026-10-06
+Origin    : violation confirmed in SemantiCI run #12 on 2026-10-06
 """
 from pathlib import Path
 

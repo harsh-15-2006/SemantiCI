@@ -2,7 +2,7 @@
 
 Invariant : total-system-balance-conserved (critical)
 Rule      : The sum of all account balances across the system must equal the sum of all opening balances.
-Origin    : violation confirmed in SemantiCI run #7 on 2026-10-06
+Origin    : violation confirmed in SemantiCI run #12 on 2026-10-06
 """
 from pathlib import Path
 
