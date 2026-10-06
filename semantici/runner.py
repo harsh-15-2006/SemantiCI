@@ -35,7 +35,10 @@ def run_workflow(base_url: str, workflow: dict) -> dict:
                 steps.append(result)
                 break
             expect = step.get("expect_status")
-            ok = r.status_code == expect if expect else r.status_code < 400
+            if isinstance(expect, list):
+                ok = r.status_code in expect
+            else:
+                ok = r.status_code == expect if expect else r.status_code < 400
             try:
                 data = r.json()
             except ValueError:

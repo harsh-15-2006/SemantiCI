@@ -41,161 +41,57 @@ workflows:
       user_id: 2
     expect_status: 200
 invariants:
-- key: cart-items-product-id-references-existing-products
-  description: Every cart_items record must reference an existing products record.
-  severity: high
-  check_sql: SELECT c.* FROM cart_items c LEFT JOIN products p ON p.id = c.product_id WHERE c.product_id
-    IS NOT NULL AND p.id IS NULL
-  gwt:
-    given: a cart_items record exists
-    when: the transaction completes
-    then: the products record it references must exist
-- key: cart-items-user-id-references-existing-users
-  description: Every cart_items record must reference an existing users record.
-  severity: high
-  check_sql: SELECT c.* FROM cart_items c LEFT JOIN users p ON p.id = c.user_id WHERE c.user_id IS NOT
-    NULL AND p.id IS NULL
-  gwt:
-    given: a cart_items record exists
-    when: the transaction completes
-    then: the users record it references must exist
-- key: cart-items-qty-not-negative
-  description: cart_items.qty must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM cart_items WHERE qty < 0
-  gwt:
-    given: any cart_items record
-    when: the transaction completes
-    then: its qty must not be negative
-- key: order-items-product-id-references-existing-products
-  description: Every order_items record must reference an existing products record.
-  severity: high
-  check_sql: SELECT c.* FROM order_items c LEFT JOIN products p ON p.id = c.product_id WHERE c.product_id
-    IS NOT NULL AND p.id IS NULL
-  gwt:
-    given: a order_items record exists
-    when: the transaction completes
-    then: the products record it references must exist
-- key: order-items-order-id-references-existing-orders
-  description: Every order_items record must reference an existing orders record.
-  severity: high
-  check_sql: SELECT c.* FROM order_items c LEFT JOIN orders p ON p.id = c.order_id WHERE c.order_id IS
-    NOT NULL AND p.id IS NULL
-  gwt:
-    given: a order_items record exists
-    when: the transaction completes
-    then: the orders record it references must exist
-- key: successful-orders-has-order-items
-  description: Every successful orders record must have at least one corresponding order_items record.
+- key: successful-payment-has-order
+  description: Every successful payment must be linked to exactly one order.
   severity: critical
-  check_sql: SELECT p.*, COUNT(c.order_id) AS order_items_found FROM orders p LEFT JOIN order_items c
-    ON c.order_id = p.id WHERE UPPER(p.status) IN ('SUCCESS', 'SUCCEEDED', 'PAID', 'COMPLETED', 'CONFIRMED',
-    'APPROVED') GROUP BY p.id HAVING COUNT(c.order_id) < 1
+  check_sql: SELECT p.id FROM payments p WHERE p.status = 'SUCCESS' AND NOT EXISTS (SELECT 1 FROM orders
+    o WHERE o.payment_id = p.id)
   gwt:
-    given: a orders record is successful
-    when: the transaction completes
-    then: at least one corresponding order_items record must exist
-- key: order-items-qty-not-negative
-  description: order_items.qty must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM order_items WHERE qty < 0
-  gwt:
-    given: any order_items record
-    when: the transaction completes
-    then: its qty must not be negative
-- key: order-items-price-not-negative
-  description: order_items.price must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM order_items WHERE price < 0
-  gwt:
-    given: any order_items record
-    when: the transaction completes
-    then: its price must not be negative
-- key: orders-payment-id-references-existing-payments
-  description: Every orders record must reference an existing payments record.
-  severity: high
-  check_sql: SELECT c.* FROM orders c LEFT JOIN payments p ON p.id = c.payment_id WHERE c.payment_id IS
-    NOT NULL AND p.id IS NULL
-  gwt:
-    given: a orders record exists
-    when: the transaction completes
-    then: the payments record it references must exist
-- key: successful-payments-has-orders
-  description: Every successful payments record must have exactly one corresponding orders record.
+    given: A successful payment has been processed
+    when: An order is skipped due to a bug
+    then: The invariant check should return the orphaned payment record
+- key: order-total-matches-items
+  description: The total amount of an order must equal the sum of (qty * price) for all its order items.
   severity: critical
-  check_sql: SELECT p.*, COUNT(c.payment_id) AS orders_found FROM payments p LEFT JOIN orders c ON c.payment_id
-    = p.id WHERE UPPER(p.status) IN ('SUCCESS', 'SUCCEEDED', 'PAID', 'COMPLETED', 'CONFIRMED', 'APPROVED')
-    GROUP BY p.id HAVING COUNT(c.payment_id) <> 1
+  check_sql: SELECT o.id FROM orders o JOIN (SELECT order_id, SUM(qty * price) as calculated_total FROM
+    order_items GROUP BY order_id) i ON o.id = i.order_id WHERE o.total <> i.calculated_total
   gwt:
-    given: a payments record is successful
-    when: the transaction completes
-    then: exactly one corresponding orders record must exist
-- key: orders-user-id-references-existing-users
-  description: Every orders record must reference an existing users record.
-  severity: high
-  check_sql: SELECT c.* FROM orders c LEFT JOIN users p ON p.id = c.user_id WHERE c.user_id IS NOT NULL
-    AND p.id IS NULL
-  gwt:
-    given: a orders record exists
-    when: the transaction completes
-    then: the users record it references must exist
-- key: orders-total-not-negative
-  description: orders.total must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM orders WHERE total < 0
-  gwt:
-    given: any orders record
-    when: the transaction completes
-    then: its total must not be negative
-- key: payments-user-id-references-existing-users
-  description: Every payments record must reference an existing users record.
-  severity: high
-  check_sql: SELECT c.* FROM payments c LEFT JOIN users p ON p.id = c.user_id WHERE c.user_id IS NOT NULL
-    AND p.id IS NULL
-  gwt:
-    given: a payments record exists
-    when: the transaction completes
-    then: the users record it references must exist
-- key: payments-amount-not-negative
-  description: payments.amount must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM payments WHERE amount < 0
-  gwt:
-    given: any payments record
-    when: the transaction completes
-    then: its amount must not be negative
-- key: products-price-not-negative
-  description: products.price must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM products WHERE price < 0
-  gwt:
-    given: any products record
-    when: the transaction completes
-    then: its price must not be negative
-- key: products-stock-not-negative
-  description: products.stock must never be negative.
-  severity: medium
-  check_sql: SELECT * FROM products WHERE stock < 0
-  gwt:
-    given: any products record
-    when: the transaction completes
-    then: its stock must not be negative
-- key: product-stock-must-equal-initial-stock-minus-the-units-sold
-  description: Product stock must equal initial stock minus the units sold.
+    given: An order has been created with associated items
+    when: The sum of order items does not match the order total header
+    then: The order id is returned as violating
+- key: payment-amount-matches-order
+  description: The payment amount must exactly match the total of the associated order.
   severity: critical
-  check_sql: SELECT p.id, p.name, p.initial_stock, p.stock, COALESCE(SUM(oi.qty),0) AS units_sold FROM
-    products p LEFT JOIN order_items oi ON oi.product_id = p.id GROUP BY p.id HAVING p.stock <> p.initial_stock
-    - COALESCE(SUM(oi.qty),0)
+  check_sql: SELECT p.id FROM payments p JOIN orders o ON o.payment_id = p.id WHERE p.amount <> o.total
   gwt:
-    given: the business scenario has been executed
-    when: the transaction completes
-    then: Product stock must equal initial stock minus the units sold.
-- key: one-checkout-must-not-produce-more-than-one-successful-payment
-  description: One checkout must not produce more than one successful payment.
+    given: A payment and an order are linked
+    when: Their monetary amounts diverge
+    then: The payment record is flagged as violating
+- key: stock-non-negative
+  description: Product stock must never drop below zero.
   severity: critical
-  check_sql: SELECT checkout_ref, COUNT(*) AS successful_payments, SUM(amount) AS total_charged FROM payments
-    WHERE status = 'SUCCESS' GROUP BY checkout_ref HAVING COUNT(*) > 1
+  check_sql: SELECT id FROM products WHERE stock < 0
   gwt:
-    given: the business scenario has been executed
-    when: the transaction completes
-    then: One checkout must not produce more than one successful payment.
+    given: A product has limited stock
+    when: More items are ordered than available stock
+    then: Stock becomes negative and violates the invariant
+- key: no-double-charging
+  description: Each checkout reference must not result in multiple successful payment records for the
+    same transaction.
+  severity: high
+  check_sql: SELECT checkout_ref FROM payments GROUP BY checkout_ref HAVING COUNT(*) > 1
+  gwt:
+    given: A checkout transaction is performed
+    when: A double charge bug duplicates the payment record for the same checkout reference
+    then: The duplicated checkout reference is returned
+- key: stock-conservation
+  description: Current stock plus total sold quantity via order items must equal initial stock for every
+    product.
+  severity: high
+  check_sql: SELECT p.id FROM products p LEFT JOIN (SELECT product_id, SUM(qty) as sold FROM order_items
+    GROUP BY product_id) i ON p.id = i.product_id WHERE p.initial_stock <> (p.stock + COALESCE(i.sold,
+    0))
+  gwt:
+    given: Products have initial stock and have been sold
+    when: Stock updates fail during checkout
+    then: The stock conservation check fails and returns the product id

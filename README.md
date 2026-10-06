@@ -44,6 +44,15 @@ python -m uvicorn semantici.web:app --port 8000
 
 Open http://localhost:8000.
 
+### Run it in Docker
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:8000. Inside the container the repository is at `/app`, so submit
+source `/app` with application folder `demo-apps/shop` or `demo-apps/bank` (or submit a Git URL).
+
 Optional: copy `.env.example` to `.env` and add an LLM API key to get LLM-proposed
 invariants. Without a key, candidates come from schema rules.
 
@@ -51,7 +60,7 @@ invariants. Without a key, candidates come from schema rules.
 
 1. Submit the project: source `https://github.com/harsh-15-2006/SemantiCI` (or this folder), application folder `demo-apps/shop`.
 2. Click **Analyze**. Review the candidates and approve them.
-3. Add these two invariants under "Add your own invariant" (severity: critical):
+3. With an LLM key the candidates already cover stock and duplicate payments. Without a key, add these two under "Add your own invariant" (severity: critical):
 
    Stock conservation:
    ```sql
@@ -75,7 +84,7 @@ invariants. Without a key, candidates come from schema rules.
    ```bash
    SHOP_BUG=skip_order python -m semantici.cli gate demo-apps/shop
    ```
-8. On GitHub: Actions -> SemantiCI Pipeline -> Run workflow -> choose a bug. The pipeline turns red at the release gate.
+8. On GitHub: Actions -> SemantiCI Pipeline -> Run workflow -> choose a shop or bank bug. The pipeline builds the Docker image and turns red at the release gate.
 
 ## Bugs available in the demo shop
 
@@ -86,11 +95,21 @@ invariants. Without a key, candidates come from schema rules.
 | `double_charge` | Customer is charged twice for one checkout | 200 |
 | `no_stock_update` | Order is created, inventory is not reduced | 200 |
 
+## Bugs available in the demo bank
+
+| `BANK_BUG` | What goes wrong | HTTP status |
+|---|---|---|
+| `none` | Nothing | 200 |
+| `no_credit` | Sender is debited, receiver is never credited | 200 |
+| `double_debit` | Sender is debited twice for one transfer | 200 |
+| `overdraft` | A transfer larger than the balance is allowed | 200 |
+
 ## Layout
 
 ```
 semantici/            the platform (web UI, analyzer, runner, verifier, test generator, CLI gate)
-demo-apps/shop/       sample e-commerce application with switchable business bugs
+demo-apps/shop/       sample e-commerce application (FastAPI) with switchable business bugs
+demo-apps/bank/       sample banking application (Flask) with switchable business bugs
   semantici.yml       how to start the app and where its database is
   business_checks/    approved suite + generated regression tests (used by CI)
 .github/workflows/    GitHub Actions pipeline with the release gate

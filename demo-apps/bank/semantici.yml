@@ -1,0 +1,22 @@
+# Tells SemantiCI how to run this application and where its business state lives.
+name: demo-bank
+start: python -m flask --app app run --host 127.0.0.1 --port {port}
+health: /health
+database:
+  type: sqlite
+  path: bank.db
+env:
+  BANK_DB: bank.db
+
+# Business scenarios SemantiCI executes before checking the business state.
+workflows:
+  - name: money-transfer
+    description: Two customers send money to each other.
+    steps:
+      - {method: GET, path: /accounts, expect_status: 200}
+      - {method: POST, path: /transfer, json: {from_account: 1, to_account: 2, amount: 2500}, expect_status: 200}
+      - {method: POST, path: /transfer, json: {from_account: 2, to_account: 3, amount: 1000}, expect_status: 200}
+  - name: transfer-above-balance
+    description: A customer tries to send more money than the account holds.
+    steps:
+      - {method: POST, path: /transfer, json: {from_account: 3, to_account: 1, amount: 50000}, expect_status: [200, 400]}

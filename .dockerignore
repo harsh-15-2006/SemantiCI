@@ -1,0 +1,7 @@
+.git
+.env
+.semantici-data
+**/__pycache__
+**/*.db
+**/.semantici-app.log
+semantici-report.json

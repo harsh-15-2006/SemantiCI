@@ -5,14 +5,20 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      bug:
+      shop_bug:
         description: Inject a business bug into the demo shop
         type: choice
         default: none
         options: [none, skip_order, double_charge, no_stock_update]
+      bank_bug:
+        description: Inject a business bug into the demo bank
+        type: choice
+        default: none
+        options: [none, no_credit, double_debit, overdraft]
 
 env:
-  SHOP_BUG: ${{ inputs.bug || 'none' }}
+  SHOP_BUG: ${{ inputs.shop_bug || 'none' }}
+  BANK_BUG: ${{ inputs.bank_bug || 'none' }}
 
 jobs:
   build-and-test:
@@ -24,35 +30,29 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Unit tests (status codes only)
+      - name: Shop unit tests (status codes only)
         working-directory: demo-apps/shop
+        run: python -m pytest tests -q
+      - name: Bank unit tests (status codes only)
+        working-directory: demo-apps/bank
         run: python -m pytest tests -q
 
   business-gate:
-    name: Semantic verification (release gate)
+    name: Package and semantic verification (release gate)
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: SemantiCI business-correctness gate
-        run: python -m semantici.cli gate demo-apps/shop
-      - name: Regression tests generated from past violations
-        run: |
-          if ls demo-apps/shop/business_checks/test_*.py >/dev/null 2>&1; then
-            python -m pytest demo-apps/shop/business_checks -q
-          else
-            echo "No generated regression tests yet."
-          fi
-      - uses: actions/upload-artifact@v4
+      - name: Build Docker image
+        run: docker build -t semantici:ci .
+      - name: Business-correctness gate - shop
+        run: docker run --rm -e SHOP_BUG semantici:ci python -m semantici.cli gate demo-apps/shop
+      - name: Business-correctness gate - bank
         if: always()
-        with:
-          name: semantici-report
-          path: semantici-report.json
-          if-no-files-found: ignore
+        run: docker run --rm -e BANK_BUG semantici:ci python -m semantici.cli gate demo-apps/bank
+      - name: Regression tests generated from past violations
+        if: always()
+        run: docker run --rm -e SHOP_BUG -e BANK_BUG semantici:ci python -m pytest demo-apps/shop/business_checks demo-apps/bank/business_checks -q
 
   release:
     name: Release

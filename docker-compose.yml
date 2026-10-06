@@ -1,0 +1,16 @@
+services:
+  semantici:
+    build: .
+    image: semantici:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - semantici-data:/data
+      # generated regression tests and the approved suite appear in the repository
+      - ./demo-apps:/app/demo-apps
+
+volumes:
+  semantici-data:

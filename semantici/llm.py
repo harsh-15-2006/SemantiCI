@@ -7,11 +7,13 @@ With no key set, SemantiCI falls back to rule-based analysis.
 """
 import json
 import os
+import time
 from pathlib import Path
 
 import httpx
 
 GEMINI_DEFAULT_MODEL = "gemini-3.6-flash"
+GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"  # used when the main model is overloaded
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 
 
@@ -39,24 +41,42 @@ def model_name():
     return os.environ.get("SEMANTICI_LLM_MODEL") or default
 
 
+def _post(url, **kwargs) -> httpx.Response:
+    """POST with retries: LLM APIs often answer 429/503 for a moment when busy."""
+    for attempt in range(4):
+        r = httpx.post(url, **kwargs)
+        if r.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
+            break
+        time.sleep(3 * (attempt + 1))
+    r.raise_for_status()
+    return r
+
+
 def complete_json(prompt: str) -> dict:
     """Sends the prompt and returns the model's reply parsed as JSON."""
     name = provider()
     if name == "gemini":
-        r = httpx.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model_name()}:generateContent",
-            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
-            },
-            timeout=120,
-        )
-        r.raise_for_status()
+        fallback = os.environ.get("SEMANTICI_LLM_FALLBACK_MODEL") or GEMINI_FALLBACK_MODEL
+        models = [model_name()] + ([fallback] if fallback != model_name() else [])
+        for i, model in enumerate(models):
+            try:
+                r = _post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
+                    },
+                    timeout=120,
+                )
+                break
+            except httpx.HTTPError:
+                if i == len(models) - 1:
+                    raise
         text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     elif name == "openai":
         base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        r = httpx.post(
+        r = _post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
             json={
@@ -67,7 +87,6 @@ def complete_json(prompt: str) -> dict:
             },
             timeout=120,
         )
-        r.raise_for_status()
         text = r.json()["choices"][0]["message"]["content"]
     else:
         raise RuntimeError("no LLM API key configured")
