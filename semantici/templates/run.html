@@ -5,68 +5,82 @@
 <h1>Run #{{ run.id }}</h1>
 <p class="muted small">Started {{ run.started_at }} UTC{% if run.env %} with <code>{{ run.env }}</code>{% endif %}</p>
 
-<div class="banner {{ run.decision }}">RELEASE STATUS: {{ "PASS" if run.decision == "PASS" else "BLOCKED" }}</div>
+<div class="banner {{ run.decision }}">{{ "SAFE TO RELEASE" if run.decision == "PASS" else "RELEASE BLOCKED" }}</div>
 
 <div class="stages">
-  <span class="stage {{ 'good' if report.workflows else 'fail' }}">Application started</span>
-  <span class="stage {{ 'good' if scenarios_ok else 'fail' }}">Scenarios executed</span>
-  <span class="stage {{ 'fail' if violations else 'good' }}">Business check</span>
+  <span class="stage {{ 'good' if started else 'fail' }}">Application started</span>
+  <span class="stage {{ 'good' if scenarios_ok else 'fail' }}">Customer journeys completed</span>
+  <span class="stage {{ 'good' if rules_ok and started else 'fail' }}">Business rules held</span>
   <span class="stage {{ 'good' if run.decision == 'PASS' else 'fail' }}">Release gate</span>
 </div>
 
-{% for reason in report.reasons %}<p><b>{{ reason }}</b></p>{% endfor %}
-{% for w in report.warnings %}<p class="small muted">Warning: {{ w }}</p>{% endfor %}
-
-{% for c in violations %}
-<div class="card violation">
-  <h2>Violation #{{ loop.index }}: {{ c.description }}</h2>
-  <p><span class="tag {{ c.severity }}">{{ c.severity }}</span> <span class="small muted">{{ c.key }}</span></p>
-  {% if c.error %}
-    <p><b>The check could not run:</b> {{ c.error }}</p>
-  {% else %}
-  <h3>Expected</h3>
-  <p>{{ c.description }}</p>
-  <h3>Observed</h3>
-  <p>{{ c.violations|length }} record(s) in the application database violate this rule:</p>
-  <table>
-    <tr>{% for k in c.violations[0].keys() %}<th>{{ k }}</th>{% endfor %}</tr>
-    {% for row in c.violations %}<tr>{% for v in row.values() %}<td class="small">{{ v }}</td>{% endfor %}</tr>{% endfor %}
-  </table>
-  <details><summary>Check that was run</summary><pre>{{ c.check_sql }}</pre></details>
-  {% if tests.get(c.key) %}
-  <h3 style="margin-top:14px">Generated verification</h3>
-  <p class="small">A regression test was written to <code>{{ tests[c.key].path }}</code>. Commit it and it runs in every
-    future pipeline.</p>
-  <details><summary>View generated test</summary><pre>{{ tests[c.key].content }}</pre></details>
-  {% endif %}
+<div class="card">
+  <h2>In simple terms</h2>
+  <p style="font-size:17px">{{ headline }}</p>
+  {% if run.decision != "PASS" and scenarios_ok %}
+  <p class="muted">The application answered every request with a success code, so ordinary tests would have passed.
+    The problems below were found by looking at what the application actually stored.</p>
   {% endif %}
 </div>
-{% endfor %}
 
+{% if plan %}
 <div class="card">
-  <h2>Scenarios executed</h2>
+  <h2>What to do, in order of priority</h2>
+  {% for item in plan %}
+  <div class="todo {{ 'blocking' if item.blocking else 'later' }}">
+    <h3><span class="num">{{ loop.index }}</span> {{ item.title }}
+      <span class="tag {{ item.level }}">{{ "must fix before release" if item.blocking else item.level ~ " importance" }}</span></h3>
+    <p><b>What happened:</b> {{ item.happened }}</p>
+    {% if item.example %}
+    <p class="small"><b>Example:</b>
+      {% for k, v in item.example.items() %}<span class="chip">{{ k|replace("_", " ") }}: <b>{{ v }}</b></span>{% endfor %}</p>
+    {% endif %}
+    <p><b>Why it matters:</b> {{ item.why }}</p>
+    <p><b>What to do:</b> {{ item.todo }}</p>
+    {% if item.test %}<p class="small muted">SemantiCI wrote an automatic test for this, so the same problem cannot come back
+      unnoticed in a later release.</p>{% endif %}
+    {% if item.check %}
+    <details><summary>Technical details</summary>
+      <p class="small"><b>Precise rule:</b> {{ item.check.description }} <span class="muted">({{ item.check.key }})</span></p>
+      {% if item.check.error %}<p class="small"><b>Error:</b> {{ item.check.error }}</p>{% endif %}
+      {% if item.check.violations %}
+      <table>
+        <tr>{% for k in item.check.violations[0].keys() %}<th>{{ k }}</th>{% endfor %}</tr>
+        {% for row in item.check.violations %}<tr>{% for v in row.values() %}<td class="small">{{ v }}</td>{% endfor %}</tr>{% endfor %}
+      </table>
+      {% endif %}
+      <p class="small"><b>Database check that was run:</b></p><pre>{{ item.check.check_sql }}</pre>
+      {% if item.test %}<p class="small"><b>Generated test:</b> <code>{{ item.test.path }}</code></p><pre>{{ item.test.content }}</pre>{% endif %}
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="muted">After fixing, run verification again from the project page.</p>
+</div>
+{% endif %}
+
+<details class="card"><summary><b>Customer journeys that were acted out ({{ report.workflows|length }})</b></summary>
   {% for w in report.workflows %}
-  <h3>{{ w.name }} <span class="tag {{ 'approved' if w.ok else 'rejected' }}">{{ "completed" if w.ok else "failed" }}</span></h3>
+  <h3 style="margin-top:12px">{{ w.name }} <span class="tag {{ 'approved' if w.ok else 'rejected' }}">{{ "completed" if w.ok else "failed" }}</span></h3>
   <table>
-    <tr><th>Step</th><th>HTTP status</th><th>Response</th></tr>
+    <tr><th>Step</th><th>Answer code</th><th>Answer</th></tr>
     {% for s in w.steps %}
     <tr><td><code>{{ s.method }} {{ s.path }}</code>{% if s.request %}<br><span class="small muted">{{ s.request|tojson }}</span>{% endif %}</td>
       <td>{{ s.status }}</td><td class="small"><code>{{ (s.response|tojson)[:220] }}</code></td></tr>
     {% endfor %}
   </table>
-  {% else %}<p class="muted">No scenarios were executed.</p>{% endfor %}
-</div>
+  {% else %}<p class="muted">None.</p>{% endfor %}
+</details>
 
-<div class="card">
-  <h2>Invariants that held ({{ passed|length }})</h2>
+<details class="card"><summary><b>Business rules that held ({{ passed|length }})</b></summary>
   {% if passed %}
   <table>
-    <tr><th>Invariant</th><th>Severity</th><th>Result</th></tr>
+    <tr><th>Rule</th><th>Importance</th><th>Result</th></tr>
     {% for c in passed %}
-    <tr><td>{{ c.description }}</td><td><span class="tag {{ c.severity }}">{{ c.severity }}</span></td>
-      <td><span class="tag approved">passed</span></td></tr>
+    <tr><td>{{ (c.gwt.plain if c.gwt else "") or c.description }}</td><td><span class="tag {{ c.severity }}">{{ c.severity }}</span></td>
+      <td><span class="tag approved">held</span></td></tr>
     {% endfor %}
   </table>
   {% else %}<p class="muted">None.</p>{% endif %}
-</div>
+</details>
 {% endblock %}

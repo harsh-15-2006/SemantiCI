@@ -94,7 +94,10 @@ def rule_candidates(tables) -> list:
                 "check_sql": f"SELECT c.* FROM {child} c LEFT JOIN {parent} p ON p.{pcol} = c.{col} "
                              f"WHERE c.{col} IS NOT NULL AND p.{pcol} IS NULL",
                 "gwt": {"given": f"a {child} record exists", "when": "the transaction completes",
-                        "then": f"the {parent} record it references must exist"},
+                        "then": f"the {parent} record it references must exist",
+                        "plain": f"Every {child} entry must belong to a real {parent} entry.",
+                        "impact": "Entries that point to nothing make totals and reports unreliable.",
+                        "fix_hint": f"Check the code that creates or deletes {parent} and {child} entries."},
             })
             if any(c["name"] == "status" for c in by_name[parent]["columns"]):
                 exactly = col in t["unique_columns"]
@@ -108,7 +111,11 @@ def rule_candidates(tables) -> list:
                                  f"WHERE UPPER(p.status) IN ({words}) "
                                  f"GROUP BY p.{pcol} HAVING COUNT(c.{col}) {'<> 1' if exactly else '< 1'}",
                     "gwt": {"given": f"a {parent} record is successful", "when": "the transaction completes",
-                            "then": f"{how} corresponding {child} record must exist"},
+                            "then": f"{how} corresponding {child} record must exist",
+                            "plain": f"Every successful entry in {parent} must have {how} matching entry in {child}.",
+                            "impact": "Something was recorded as successful, but the step that must follow it "
+                                      "did not happen correctly. A customer may have paid and received nothing.",
+                            "fix_hint": f"Check the code that runs right after a {parent} entry succeeds and creates the {child} entry."},
                 })
         for c in t["columns"]:
             if c["name"].lower() in AMOUNT_COLUMNS and re.search(r"INT|REAL|NUM|DEC|FLOAT|DOUB", c["type"].upper()):
@@ -118,7 +125,10 @@ def rule_candidates(tables) -> list:
                     "severity": "medium",
                     "check_sql": f"SELECT * FROM {child} WHERE {c['name']} < 0",
                     "gwt": {"given": f"any {child} record", "when": "the transaction completes",
-                            "then": f"its {c['name']} must not be negative"},
+                            "then": f"its {c['name']} must not be negative",
+                            "plain": f"The {c['name']} in {child} can never go below zero.",
+                            "impact": "A negative value means something was sold, spent or removed that did not exist.",
+                            "fix_hint": f"Check the validation that runs before {c['name']} in {child} is reduced."},
                 })
     return out
 
@@ -137,7 +147,10 @@ Return ONLY JSON in this shape:
     {{"key": "kebab-case", "description": "one business sentence",
       "severity": "critical|high|medium|low",
       "check_sql": "SELECT ... rows that VIOLATE the rule",
-      "gwt": {{"given": "...", "when": "...", "then": "..."}}}}
+      "gwt": {{"given": "...", "when": "...", "then": "..."}},
+      "plain": "the rule in one short everyday sentence a shop owner would understand, no table or column names",
+      "impact": "one short sentence: what goes wrong for the customer or the business when this rule is broken",
+      "fix_hint": "one short sentence telling the developer which part of the code to check"}}
   ]
 }}
 
@@ -195,7 +208,8 @@ def _clean_candidates(raw, db_path, notes) -> list:
             "description": str(c["description"]).strip(),
             "severity": severity if severity in SEVERITIES else "medium",
             "check_sql": c["check_sql"].strip().rstrip(";"),
-            "gwt": {k: str(gwt.get(k, "")) for k in ("given", "when", "then")},
+            "gwt": {**{k: str(gwt.get(k, "")) for k in ("given", "when", "then")},
+                    **{k: str(c.get(k) or gwt.get(k) or "") for k in ("plain", "impact", "fix_hint")}},
         })
     return out
 
@@ -230,9 +244,11 @@ def _dry_run(app_dir, cfg, env, workflows) -> list:
         stop_app(app)
 
 
-def _validated_workflows(app_dir, cfg, env, prompt, workflows, notes) -> list:
+def _validated_workflows(app_dir, cfg, env, prompt, workflows, notes, progress) -> list:
     """Dry-runs LLM-proposed workflows and lets the LLM repair them once if any step fails."""
     for attempt in range(2):
+        progress("Trying out the suggested workflows on the running application" if attempt == 0
+                 else "Correcting a workflow that failed and trying it again")
         try:
             results = _dry_run(app_dir, cfg, env, workflows)
         except AppStartError as e:
@@ -250,12 +266,12 @@ def _validated_workflows(app_dir, cfg, env, prompt, workflows, notes) -> list:
                                       + REPAIR.format(failures=failures))
             repaired = _clean_workflows(reply.get("workflows"))
         except Exception as e:
-            notes.append(f"Workflow repair failed ({type(e).__name__}).")
+            notes.append("Automatic correction of a failed workflow was not possible this time.")
             break
         if not repaired:
             break
         workflows = repaired
-        notes.append(f"{len(failed)} proposed workflow(s) failed a dry run and were sent back to the LLM for repair.")
+        notes.append(f"{len(failed)} suggested workflow(s) failed a trial run and were corrected automatically.")
     out = []
     for wf, result in zip(workflows, results):
         last = result["steps"][-1] if result["steps"] else {}
@@ -264,10 +280,13 @@ def _validated_workflows(app_dir, cfg, env, prompt, workflows, notes) -> list:
     return out
 
 
-def analyze(app_dir, env=None) -> dict:
+def analyze(app_dir, env=None, progress=None) -> dict:
     """Starts the app once to observe it, then proposes workflows and candidate invariants."""
+    progress = progress or (lambda message: None)
     cfg = load_config(app_dir)
+    progress("Starting the application")
     app = start_app(app_dir, cfg, env)
+    progress("Reading its endpoints and database structure")
     openapi = {}
     try:
         try:
@@ -304,24 +323,27 @@ def analyze(app_dir, env=None) -> dict:
                 openapi=json.dumps(openapi)[:15000],
                 source=collect_source(app_dir),
             )
+            progress("Working out the business rules this application must always keep")
             reply = llm.complete_json(prompt)
+            progress("Checking each suggested rule against the real database")
             candidates = _clean_candidates(reply.get("invariants"), db_path, notes)
             if candidates:
                 llm_workflows = _clean_workflows(reply.get("workflows"))
                 if llm_workflows:
-                    llm_workflows = _validated_workflows(app_dir, cfg, env, prompt, llm_workflows, notes)
+                    llm_workflows = _validated_workflows(app_dir, cfg, env, prompt, llm_workflows, notes, progress)
                 result.update(method=f"llm ({llm.provider()}: {llm.model_name()})", invariants=candidates,
                               workflows=repo_workflows + [dict(w, source="llm") for w in llm_workflows])
                 return result
-            notes.append("The LLM returned no usable invariants; used schema rules instead.")
+            notes.append("Deep analysis produced no usable rules, so rules were suggested from the database structure only.")
         except Exception as e:
-            notes.append(f"LLM analysis failed ({type(e).__name__}: {e}); used schema rules instead.")
+            print(f"deep analysis failed: {type(e).__name__}: {e}", flush=True)
+            notes.append("Deep analysis was not available just now, so rules were suggested from the database "
+                         "structure only. Click Re-analyze to try again.")
     else:
-        notes.append("No LLM API key configured; candidates were derived from the database schema by rules.")
+        notes.append("Deep analysis is not configured, so rules were suggested from the database structure only.")
 
     if not repo_workflows:
-        notes.append("No workflows are available: the repository does not define any, and proposing them needs the LLM. "
-                     "Click Re-analyze to try the LLM again.")
+        notes.append("No workflows could be suggested this time. Click Re-analyze to try again.")
     result.update(method="schema rules", workflows=repo_workflows,
                   invariants=_clean_candidates(rule_candidates(tables), db_path, notes))
     return result

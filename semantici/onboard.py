@@ -189,9 +189,8 @@ def propose_config(root, feedback: str = "", previous: str = "") -> dict:
                         "reason": str(reply.get("reason") or ""), "summary": str(reply.get("summary") or ""),
                         "method": f"llm ({llm.provider()}: {llm.model_name()})"}
         except Exception as e:
-            result = heuristic_config(root)
-            result["reason"] = (result.get("reason", "") + f" (LLM proposal failed: {type(e).__name__})").strip()
-            return result
+            print(f"deep repository analysis failed: {type(e).__name__}: {e}", flush=True)
+            return heuristic_config(root)
     return heuristic_config(root)
 
 
@@ -206,17 +205,20 @@ def _run(command, cwd, env, timeout=900) -> tuple:
         return False, str(e)
 
 
-def prepare(app_dir, cfg) -> tuple:
+def prepare(app_dir, cfg, progress=None) -> tuple:
     """Installs the application's dependencies. Python apps get their own virtual environment."""
+    progress = progress or (lambda message: None)
     app_dir = Path(app_dir)
     log = []
     if cfg.get("language") != "node" and not (app_dir / VENV).exists():
+        progress("Creating an isolated environment for this application")
         ok, out = _run([sys.executable, "-m", "venv", VENV], app_dir, dict(os.environ))
         log.append(f"$ python -m venv {VENV}\n{out}".strip())
         if not ok:
             return False, "\n".join(log)
     env = run_env(app_dir, cfg)
     for command in cfg.get("install") or []:
+        progress(f"Installing: {command}")
         ok, out = _run(command, app_dir, env)
         log.append(f"$ {command}\n{out}".strip())
         if not ok:

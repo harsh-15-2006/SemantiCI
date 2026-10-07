@@ -40,58 +40,80 @@ workflows:
     json:
       user_id: 2
     expect_status: 200
+- name: complete-checkout-flow
+  description: A user adds an item to the cart and successfully completes the checkout process. [dry run
+    passed]
+  steps:
+  - method: POST
+    path: /cart
+    json:
+      user_id: 1
+      product_id: 1
+      qty: 2
+    expect_status: 200
+  - method: POST
+    path: /checkout
+    json:
+      user_id: 1
+    expect_status: 200
 invariants:
-- key: successful-payment-has-order
-  description: Every successful payment must be linked to exactly one order.
+- key: order-exists-for-payment
+  description: Every successful payment must have exactly one corresponding order associated with it.
   severity: critical
-  check_sql: SELECT p.id FROM payments p WHERE p.status = 'SUCCESS' AND NOT EXISTS (SELECT 1 FROM orders
-    o WHERE o.payment_id = p.id)
+  check_sql: SELECT p.id FROM payments p LEFT JOIN orders o ON o.payment_id = p.id WHERE p.status = 'SUCCESS'
+    AND o.id IS NULL
   gwt:
-    given: A successful payment has been processed
-    when: An order is skipped due to a bug
-    then: The invariant check should return the orphaned payment record
+    given: A user completes a checkout resulting in a successful payment
+    when: The system records the transaction
+    then: An order must be created and linked to that payment
+    plain: Every successful payment must generate an order.
+    impact: The customer is charged money, but no order or shipment is ever created.
+    fix_hint: Check the checkout endpoint logic where order creation might be skipped or fail conditionally.
+- key: single-charge-per-checkout
+  description: A checkout operation must not create duplicate payment records for the same transaction.
+  severity: critical
+  check_sql: SELECT checkout_ref, COUNT(*) as cnt FROM payments GROUP BY checkout_ref HAVING cnt > 1
+  gwt:
+    given: A user initiates a single checkout request
+    when: The payment is processed
+    then: Only one payment record is created for this checkout reference
+    plain: A customer should never be charged twice for a single checkout.
+    impact: The customer loses extra money due to a duplicate charge on their account.
+    fix_hint: Check the checkout endpoint for duplicated payment insertion statements.
 - key: order-total-matches-items
-  description: The total amount of an order must equal the sum of (qty * price) for all its order items.
+  description: The total amount of an order must equal the sum of the quantities multiplied by prices
+    of its order items.
   severity: critical
   check_sql: SELECT o.id FROM orders o JOIN (SELECT order_id, SUM(qty * price) as calculated_total FROM
-    order_items GROUP BY order_id) i ON o.id = i.order_id WHERE o.total <> i.calculated_total
+    order_items GROUP BY order_id) oi ON oi.order_id = o.id WHERE o.total <> oi.calculated_total
   gwt:
-    given: An order has been created with associated items
-    when: The sum of order items does not match the order total header
-    then: The order id is returned as violating
-- key: payment-amount-matches-order
-  description: The payment amount must exactly match the total of the associated order.
-  severity: critical
-  check_sql: SELECT p.id FROM payments p JOIN orders o ON o.payment_id = p.id WHERE p.amount <> o.total
-  gwt:
-    given: A payment and an order are linked
-    when: Their monetary amounts diverge
-    then: The payment record is flagged as violating
-- key: stock-non-negative
-  description: Product stock must never drop below zero.
-  severity: critical
-  check_sql: SELECT id FROM products WHERE stock < 0
-  gwt:
-    given: A product has limited stock
-    when: More items are ordered than available stock
-    then: Stock becomes negative and violates the invariant
-- key: no-double-charging
-  description: Each checkout reference must not result in multiple successful payment records for the
-    same transaction.
+    given: An order has been placed with multiple items
+    when: The order total is calculated and stored
+    then: The order total must match the sum of all item prices times their quantities
+    plain: The total price on an order must match the sum of the items inside it.
+    impact: The business might collect incorrect revenue or display mismatched pricing to customers.
+    fix_hint: Check the total calculation logic in the checkout endpoint before inserting into the orders
+      table.
+- key: stock-decremented-on-order
+  description: Product stock must be reduced by the exact ordered quantity when an order is placed.
   severity: high
-  check_sql: SELECT checkout_ref FROM payments GROUP BY checkout_ref HAVING COUNT(*) > 1
+  check_sql: SELECT p.id FROM products p JOIN (SELECT product_id, SUM(qty) as ordered_qty FROM order_items
+    GROUP BY product_id) oi ON oi.product_id = p.id WHERE p.stock <> (p.initial_stock - oi.ordered_qty)
   gwt:
-    given: A checkout transaction is performed
-    when: A double charge bug duplicates the payment record for the same checkout reference
-    then: The duplicated checkout reference is returned
-- key: stock-conservation
-  description: Current stock plus total sold quantity via order items must equal initial stock for every
-    product.
-  severity: high
-  check_sql: SELECT p.id FROM products p LEFT JOIN (SELECT product_id, SUM(qty) as sold FROM order_items
-    GROUP BY product_id) i ON p.id = i.product_id WHERE p.initial_stock <> (p.stock + COALESCE(i.sold,
-    0))
+    given: A product has an initial stock and an order is placed for a specific quantity
+    when: The order is successfully finalized
+    then: The current product stock must decrease by the ordered quantity
+    plain: Product inventory stock must decrease correctly when items are bought.
+    impact: The store continues selling out-of-stock items, leading to fulfillment failures.
+    fix_hint: Check the inventory update query in the checkout loop to ensure stock is properly decremented.
+- key: cart-emptied-after-checkout
+  description: A user's cart must be completely cleared of items after a successful checkout.
+  severity: medium
+  check_sql: SELECT c.id FROM cart_items c JOIN payments p ON p.user_id = c.user_id WHERE p.status = 'SUCCESS'
   gwt:
-    given: Products have initial stock and have been sold
-    when: Stock updates fail during checkout
-    then: The stock conservation check fails and returns the product id
+    given: A user has items in their cart and checks out successfully
+    when: The checkout completes
+    then: The user's cart should contain no items
+    plain: Items should be removed from the cart after checking out.
+    impact: The customer sees duplicate items lingering in their cart after purchasing them.
+    fix_hint: Check the cart deletion statement at the end of the checkout transaction.

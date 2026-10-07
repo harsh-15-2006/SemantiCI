@@ -12,8 +12,10 @@ SUITE_FILE = "suite.yml"
 BLOCKING = ("critical",)
 
 
-def execute_suite(app_dir, workflows, invariants, env=None) -> dict:
+def execute_suite(app_dir, workflows, invariants, env=None, progress=None) -> dict:
+    progress = progress or (lambda message: None)
     report = {"workflows": [], "checks": [], "decision": "PASS", "reasons": [], "warnings": []}
+    progress("Starting a fresh copy of the application")
     try:
         app = start_app(app_dir, load_config(app_dir), env)
     except AppStartError as e:
@@ -21,8 +23,10 @@ def execute_suite(app_dir, workflows, invariants, env=None) -> dict:
         report["reasons"].append(f"Application failed to start: {e}")
         return report
     try:
-        for wf in workflows:
+        for number, wf in enumerate(workflows, 1):
+            progress(f"Running scenario {number} of {len(workflows)}: {wf.get('name', 'workflow')}")
             report["workflows"].append(run_workflow(app.base_url, wf))
+        progress(f"Checking {len(invariants)} business rules against the stored data")
         db_path = app.db_path
         for inv in invariants:
             entry = {k: inv.get(k) for k in ("key", "description", "severity", "check_sql", "gwt")}

@@ -46,10 +46,23 @@
   details summary { cursor:pointer; color:var(--brand); font-size:13px; }
   .violation { border-left:4px solid var(--bad); }
   a { color:var(--brand); }
+  .next { background:#fff8e1; border:1px solid #f0d58a; border-radius:8px; padding:12px 16px; margin:16px 0; font-size:16px; }
+  .live { border-color:var(--brand); }
+  .live-steps { margin:8px 0; padding-left:22px; } .live-steps li { padding:2px 0; }
+  .live-steps li.finished { color:var(--muted); } .live-steps li.now { font-weight:600; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:-2px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .todo { border-left:4px solid var(--line); padding:4px 0 4px 14px; margin:18px 0; }
+  .todo.blocking { border-left-color:var(--bad); } .todo.later { border-left-color:#d8a400; }
+  .todo h3 { font-size:16px; } .todo p { margin:6px 0; }
+  .num { display:inline-block; min-width:24px; height:24px; line-height:24px; text-align:center; border-radius:12px; background:var(--ink); color:#fff; font-size:13px; margin-right:4px; }
+  .chip { display:inline-block; background:#eef1f6; border-radius:6px; padding:1px 8px; margin:2px 4px 2px 0; }
+  details.card > summary { color:var(--ink); font-size:15px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
 </style>
 </head>
 <body>
-<header><a href="/">SemantiCI</a><span>Business-correctness release gate</span></header>
+<header><a href="/">SemantiCI</a><span>Checks that your application does the right thing for the business, before every release</span></header>
 <main>
 {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
 {% block content %}{% endblock %}

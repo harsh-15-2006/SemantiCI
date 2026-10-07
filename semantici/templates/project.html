@@ -5,37 +5,80 @@
 <h1>{{ project.name }}</h1>
 <p class="muted small">{{ project.source }}{% if project.subdir %} / {{ project.subdir }}{% endif %}</p>
 
+{% if job %}
+<div class="card live" id="live">
+  <h2><span class="spinner"></span> <span id="live-title">{{ job.title }}</span> <span class="muted small" id="live-time"></span></h2>
+  <ol id="live-steps" class="live-steps"></ol>
+  <p class="small muted">This page updates by itself. You do not need to refresh it.</p>
+</div>
+<script>
+  (function () {
+    var list = document.getElementById("live-steps");
+    document.querySelectorAll("main button").forEach(function (b) { b.disabled = true; });
+    function tick() {
+      fetch("/projects/{{ project.id }}/progress").then(function (r) { return r.json(); }).then(function (job) {
+        if (!job.active) { location.href = "/projects/{{ project.id }}"; return; }
+        document.getElementById("live-title").textContent = job.title;
+        document.getElementById("live-time").textContent = job.elapsed + " s";
+        list.innerHTML = "";
+        job.steps.forEach(function (text, i) {
+          var li = document.createElement("li");
+          li.textContent = text;
+          li.className = (i === job.steps.length - 1 && !job.done) ? "now" : "finished";
+          list.appendChild(li);
+        });
+        if (job.done) { location.href = job.redirect; return; }
+        setTimeout(tick, 1000);
+      }).catch(function () { setTimeout(tick, 2000); });
+    }
+    tick();
+  })();
+</script>
+{% else %}
+<div class="next"><b>What to do next:</b> {{ next_step }}</div>
+{% endif %}
+
 {% if stats %}
-<div class="banner {{ stats.decision }}">RELEASE STATUS: {{ "PASS" if stats.decision == "PASS" else "BLOCKED" }}
-  <a class="small" style="font-weight:400" href="/runs/{{ stats.run_id }}">view run #{{ stats.run_id }}</a></div>
+<div class="banner {{ stats.decision }}">{{ "SAFE TO RELEASE" if stats.decision == "PASS" else "RELEASE BLOCKED" }}
+  <a class="small" style="font-weight:400" href="/runs/{{ stats.run_id }}">see run #{{ stats.run_id }}</a></div>
 {% endif %}
 
 <div class="grid">
   <div class="stat"><b>{{ workflows|length }}</b><span>Workflows found</span></div>
-  <div class="stat"><b>{{ invariants|length }}</b><span>Invariants</span></div>
+  <div class="stat"><b>{{ invariants|length }}</b><span>Business rules</span></div>
   <div class="stat"><b>{{ counts.approved }}</b><span>Approved</span></div>
-  <div class="stat"><b>{{ stats.executed if stats else 0 }}</b><span>Checks executed</span></div>
-  <div class="stat"><b>{{ stats.passed if stats else 0 }}</b><span>Passed</span></div>
-  <div class="stat"><b>{{ stats.failed if stats else 0 }}</b><span>Failed</span></div>
-  <div class="stat"><b>{{ stats.critical if stats else 0 }}</b><span>Critical violations</span></div>
+  <div class="stat"><b>{{ stats.executed if stats else 0 }}</b><span>Rules checked</span></div>
+  <div class="stat"><b>{{ stats.passed if stats else 0 }}</b><span>Held</span></div>
+  <div class="stat"><b>{{ stats.failed if stats else 0 }}</b><span>Broken</span></div>
+  <div class="stat"><b>{{ stats.critical if stats else 0 }}</b><span>Critical</span></div>
 </div>
 
 {% if setup %}
 <div class="card">
-  <h2>0. Run configuration {% if setup.status == "ready" %}<span class="tag approved">ready</span>{% elif setup.status == "failed" %}<span class="tag rejected">failed</span>{% else %}<span class="tag candidate">proposed</span>{% endif %}</h2>
-  <p class="small muted">This repository has no <code>semantici.yml</code>, so SemantiCI worked out how to install and
-    start it ({{ setup.method }}). Check it, correct it if needed, then install and start.</p>
-  {% if setup.summary %}<p>{{ setup.summary }}</p>{% endif %}
-  {% if setup.supported == false %}<p><b>Outside the supported scope:</b> {{ setup.reason }}</p>{% endif %}
-  {% if setup.suggestion and setup.status == "failed" %}<p class="small"><b>The configuration below is a corrected proposal based on the error.</b></p>{% endif %}
-  {% if setup.status == "ready" %}<details><summary>View / change configuration</summary>{% endif %}
-  <form method="post" action="/projects/{{ project.id }}/setup">
-    <textarea name="yaml" style="min-height:220px">{{ setup.yaml }}</textarea>
-    <p><button class="primary" type="submit">Install and start</button>
-      <span class="small muted">Installs dependencies in an isolated environment and starts the app once. This can take a few minutes.</span></p>
-  </form>
-  {% if setup.status == "ready" %}</details>{% endif %}
-  {% if setup.log %}<details {% if setup.status == "failed" %}open{% endif %}><summary>Setup log</summary><pre>{{ setup.log }}</pre></details>{% endif %}
+  <h2>0. How to run this application
+    {% if setup.status == "ready" %}<span class="tag approved">ready</span>
+    {% elif setup.status == "failed" %}<span class="tag rejected">needs attention</span>
+    {% elif setup.status == "preparing" %}<span class="tag candidate">preparing</span>
+    {% else %}<span class="tag candidate">please check</span>{% endif %}</h2>
+  {% if setup.fatal %}
+    <p><b>{{ setup.log }}</b></p>
+  {% elif setup.status == "preparing" %}
+    <p class="muted">SemantiCI is reading the repository.</p>
+  {% else %}
+    <p class="small muted">This repository does not say how to run it, so SemantiCI worked it out from the files.
+      Check it, correct it if needed, then install and start.</p>
+    {% if setup.summary %}<p>{{ setup.summary }}</p>{% endif %}
+    {% if setup.supported == false %}<p><b>This application is outside what SemantiCI supports today:</b> {{ setup.reason }}</p>{% endif %}
+    {% if setup.suggestion and setup.status == "failed" %}<p class="small"><b>The settings below were corrected after the error. Check them and try again.</b></p>{% endif %}
+    {% if setup.status == "ready" %}<details><summary>View or change the run settings</summary>{% endif %}
+    <form method="post" action="/projects/{{ project.id }}/setup">
+      <textarea name="yaml" style="min-height:220px">{{ setup.yaml }}</textarea>
+      <p><button class="primary" type="submit">Install and start</button>
+        <span class="small muted">Installs what the application needs in its own isolated space and starts it once.</span></p>
+    </form>
+    {% if setup.status == "ready" %}</details>{% endif %}
+    {% if setup.log %}<details {% if setup.status == "failed" %}open{% endif %}><summary>Setup log</summary><pre>{{ setup.log }}</pre></details>{% endif %}
+  {% endif %}
 </div>
 {% endif %}
 
@@ -45,12 +88,12 @@
     <button class="primary" type="submit">{{ "Re-analyze" if project.analysis_method else "Analyze" }}</button>
   </form>
   {% if project.analysis_method %}
-  <span class="small muted">Last analysis used: {{ project.analysis_method }}</span>
+  <span class="small muted">{{ "Full analysis completed." if deep else "Basic analysis completed (database structure only)." }}</span>
   {% for note in analysis.notes %}<p class="small muted">{{ note }}</p>{% endfor %}
-  <details><summary>What SemantiCI found ({{ analysis.tables|length }} tables, {{ analysis.endpoints|length }} endpoints)</summary>
-    <p class="small"><b>Endpoints:</b> {% for e in analysis.endpoints %}<code>{{ e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  <details><summary>What SemantiCI found ({{ analysis.tables|length }} data tables, {{ analysis.endpoints|length }} documented endpoints)</summary>
+    {% if analysis.endpoints %}<p class="small"><b>Endpoints:</b> {% for e in analysis.endpoints %}<code>{{ e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
     <table>
-      <tr><th>Table</th><th>Columns</th><th>References</th></tr>
+      <tr><th>Table</th><th>Columns</th><th>Linked to</th></tr>
       {% for t in analysis.tables %}
       <tr><td><code>{{ t.name }}</code></td>
         <td class="small">{% for c in t.columns %}{{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
@@ -58,20 +101,20 @@
       {% endfor %}
     </table>
   </details>
-  {% else %}<span class="small muted">Starts the application, reads its API, database schema and source code.</span>{% endif %}
+  {% else %}<span class="small muted">Starts the application and studies its endpoints, stored data and source code.</span>{% endif %}
 </div>
 
 <div class="card">
-  <h2>2. Workflows</h2>
+  <h2>2. Workflows <span class="muted small">(customer journeys SemantiCI acts out)</span></h2>
   {% if workflows %}
   <table>
-    <tr><th>Workflow</th><th>Steps</th><th>Source</th><th>Status</th><th></th></tr>
+    <tr><th>Workflow</th><th>Steps</th><th>Origin</th><th>Status</th><th></th></tr>
     {% for w in workflows %}
     <tr>
       <td><b>{{ w.name }}</b><br><span class="small muted">{{ w.description }}</span></td>
       <td class="small">{% for s in w.steps %}<code>{{ s.method }} {{ s.path }}</code>{% if not loop.last %} &rarr; {% endif %}{% endfor %}</td>
-      <td class="small">{{ w.source }}</td>
-      <td><span class="tag {{ w.status }}">{{ w.status }}</span></td>
+      <td class="small">{{ source_label.get(w.source, w.source) }}</td>
+      <td><span class="tag {{ w.status }}">{{ "waiting for review" if w.status == "candidate" else w.status }}</span></td>
       <td style="white-space:nowrap">
         <form class="inline" method="post" action="/workflows/{{ w.id }}">
           {% if w.status != "approved" %}<button class="sm ok" name="status" value="approved">Approve</button>{% endif %}
@@ -84,34 +127,35 @@
 </div>
 
 <div class="card">
-  <h2>3. Business invariants: review candidates</h2>
-  <p class="small muted">Generated rules are only candidates. Only approved invariants become release gates.
+  <h2>3. Business rules <span class="muted small">(what must always be true after a customer journey)</span></h2>
+  <p class="small muted">Suggested rules are only suggestions. A rule protects your releases only after you approve it.
     {{ counts.candidate }} waiting for review, {{ counts.approved }} approved, {{ counts.rejected }} rejected.</p>
   {% if counts.candidate %}
   <form class="inline" method="post" action="/projects/{{ project.id }}/approve-all">
-    <button class="sm ok" name="severity" value="critical">Approve all critical candidates</button>
-    <button class="sm ok" name="severity" value="">Approve all candidates</button>
+    <button class="sm ok" name="severity" value="critical">Approve all critical suggestions</button>
+    <button class="sm ok" name="severity" value="">Approve all suggestions</button>
   </form>
   {% endif %}
   {% if invariants %}
   <table>
-    <tr><th>Invariant</th><th>Severity</th><th>Source</th><th>Status</th><th></th></tr>
+    <tr><th>Rule</th><th>Importance</th><th>Origin</th><th>Status</th><th></th></tr>
     {% for i in invariants %}
     <tr>
-      <td><b>{{ i.description }}</b><br><span class="small muted">{{ i.key }}</span>
-        <details><summary>View / edit check</summary>
+      <td><b>{{ i.plain or i.description }}</b>
+        {% if i.impact %}<br><span class="small muted">If broken: {{ i.impact }}</span>{% endif %}
+        <details><summary>Technical details and editing</summary>
           <form method="post" action="/invariants/{{ i.id }}">
-            <label>Description</label><input type="text" name="description" value="{{ i.description }}">
-            <label>Severity</label>
+            <label>Precise wording</label><input type="text" name="description" value="{{ i.description }}">
+            <label>Importance (only critical rules block a release)</label>
             <select name="severity">{% for s in severities %}<option {% if s == i.severity %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
-            <label>Check SQL (returns the records that violate the rule)</label>
+            <label>Database check (finds the records that break the rule)</label>
             <textarea name="check_sql">{{ i.check_sql }}</textarea>
             <p><button class="sm" type="submit">Save changes</button></p>
           </form>
         </details></td>
       <td><span class="tag {{ i.severity }}">{{ i.severity }}</span></td>
-      <td class="small">{{ i.source }}</td>
-      <td><span class="tag {{ i.status }}">{{ i.status }}</span></td>
+      <td class="small">{{ source_label.get(i.source, i.source) }}</td>
+      <td><span class="tag {{ i.status }}">{{ "waiting for review" if i.status == "candidate" else i.status }}</span></td>
       <td style="white-space:nowrap">
         <form class="inline" method="post" action="/invariants/{{ i.id }}">
           {% if i.status != "approved" %}<button class="sm ok" name="status" value="approved">Approve</button>{% endif %}
@@ -120,44 +164,44 @@
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="muted">Run Analyze to generate candidate invariants.</p>{% endif %}
+  {% else %}<p class="muted">Run Analyze to get suggested business rules.</p>{% endif %}
 
-  <details style="margin-top:12px"><summary>Add your own invariant</summary>
+  <details style="margin-top:12px"><summary>Add your own rule</summary>
     <form method="post" action="/projects/{{ project.id }}/invariants">
-      <label>Business rule</label><input type="text" name="description" placeholder="Stock must equal initial stock minus units sold.">
-      <label>Severity</label>
+      <label>The rule, in your own words</label><input type="text" name="description" placeholder="Stock must equal the starting stock minus the units sold.">
+      <label>Importance</label>
       <select name="severity">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select>
-      <label>Check SQL (returns the records that violate the rule)</label>
+      <label>Database check (a SELECT that returns the records that break the rule)</label>
       <textarea name="check_sql" placeholder="SELECT ..."></textarea>
-      <p><button class="sm primary" type="submit">Add invariant</button></p>
+      <p><button class="sm primary" type="submit">Add rule</button></p>
     </form>
   </details>
 </div>
 
 <div class="card">
-  <h2>4. Run semantic verification</h2>
+  <h2>4. Run verification</h2>
   <form method="post" action="/projects/{{ project.id }}/run">
     <div class="row">
-      <div><label>Environment for this run (optional, KEY=VALUE)</label>
+      <div><label>Settings for this run (optional, NAME=VALUE)</label>
         <input type="text" name="env" placeholder="SHOP_BUG=skip_order"></div>
       <div style="flex:0"><button class="primary" type="submit">Run verification</button></div>
     </div>
   </form>
-  <p class="small muted">Starts a fresh copy of the application, executes the approved workflows, then checks every
-    approved invariant against the application's database.</p>
-  <p class="small muted">CI release gate: approved checks are saved to <code>{{ suite_dir }}/suite.yml</code> in the
-    project, and run with <code>python -m semantici.cli gate &lt;app folder&gt;</code>.</p>
+  <p class="small muted">Starts a fresh copy of the application, acts out the approved workflows, then checks every
+    approved rule against the data the application actually stored.</p>
+  <p class="small muted">In your pipeline: the approved rules are saved to <code>{{ suite_dir }}/suite.yml</code> and run with
+    <code>python -m semantici.cli gate &lt;app folder&gt;</code>.</p>
 </div>
 
 <div class="card">
   <h2>Run history</h2>
   {% if runs %}
   <table>
-    <tr><th>Run</th><th>Started (UTC)</th><th>Environment</th><th>Release status</th></tr>
+    <tr><th>Run</th><th>Started (UTC)</th><th>Settings</th><th>Result</th></tr>
     {% for r in runs %}
     <tr><td><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td><td class="small">{{ r.started_at }}</td>
       <td class="small"><code>{{ r.env or "-" }}</code></td>
-      <td><span class="tag {{ r.decision }}">{{ r.decision }}</span></td></tr>
+      <td><span class="tag {{ r.decision }}">{{ "safe to release" if r.decision == "PASS" else "blocked" }}</span></td></tr>
     {% endfor %}
   </table>
   {% else %}<p class="muted">No runs yet.</p>{% endif %}

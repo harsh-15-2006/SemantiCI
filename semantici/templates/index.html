@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Projects</h1>
-<p class="muted">Submit a project. SemantiCI analyzes it, proposes business invariants, verifies the real
-business state after running its workflows, and blocks the release on a critical violation.</p>
+<p class="muted">Give SemantiCI a repository. It learns how the application works, suggests the business rules it must
+always keep, acts out real customer journeys, and tells you in plain words whether it is safe to release.</p>
 
 <div class="card">
   <h2>Submit a project</h2>
@@ -15,8 +15,7 @@ business state after running its workflows, and blocks the release on a critical
       <div><label>Project name (optional)</label>
         <input type="text" name="name" placeholder="Demo Shop"></div>
     </div>
-    <p class="small muted">Supported in this prototype: a web application with a <code>semantici.yml</code> file
-      (start command, health URL, SQLite database path).</p>
+    <p class="small muted">Supported today: Python and Node.js web applications that keep their data in SQLite.</p>
     <button class="primary" type="submit">Submit project</button>
   </form>
 </div>
@@ -25,19 +24,17 @@ business state after running its workflows, and blocks the release on a critical
   <h2>Submitted projects</h2>
   {% if projects %}
   <table>
-    <tr><th>Project</th><th>Source</th><th>Analysis</th><th>Release status</th></tr>
+    <tr><th>Project</th><th>Source</th><th>Analysis</th><th>Last result</th></tr>
     {% for p in projects %}
     <tr>
       <td><a href="/projects/{{ p.id }}"><b>{{ p.name }}</b></a></td>
       <td class="small">{{ p.source }}{% if p.subdir %} / {{ p.subdir }}{% endif %}</td>
-      <td class="small">{{ p.analysis_method or "not analyzed" }}</td>
-      <td>{% if p.last_decision %}<span class="tag {{ p.last_decision }}">{{ p.last_decision }}</span>{% else %}<span class="muted small">no runs yet</span>{% endif %}</td>
+      <td class="small">{% if p.busy %}<span class="spinner"></span> working{% elif p.analysis_method %}analyzed{% else %}not analyzed yet{% endif %}</td>
+      <td>{% if p.last_decision %}<span class="tag {{ p.last_decision }}">{{ "safe to release" if p.last_decision == "PASS" else "blocked" }}</span>{% else %}<span class="muted small">no runs yet</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
   {% else %}<p class="muted">No projects yet.</p>{% endif %}
 </div>
 
-<p class="small muted">Analysis engine:
-  {% if llm %}LLM ({{ llm }}, model {{ model }}){% else %}schema rules (no LLM API key configured){% endif %}</p>
 {% endblock %}
