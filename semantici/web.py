@@ -19,7 +19,7 @@ from . import llm, store
 from .analyzer import SEVERITIES, _slug, analyze
 from .apprunner import CONFIG_NAME, AppStartError, load_config, resolve_db
 from .harness import SUITE_DIR, execute_suite, save_suite
-from .onboard import normalize, prepare, propose_config, to_yaml, try_start, write_config
+from .onboard import NO_DATABASE, normalize, prepare, propose_config, to_yaml, try_start, write_config
 from .testgen import write_regression_test
 from .verifier import sql_error
 
@@ -270,11 +270,28 @@ def _setup_project(project: dict, text: str, progress) -> tuple:
         return dict(setup, status="failed", log=f"app_dir '{cfg['app_dir']}' does not exist in the repository."), None
     write_config(app_dir, cfg)
     ok, log = prepare(app_dir, cfg, progress)
+    has_db = False
     if ok:
         progress("Starting the application once to check that it works")
-        ok, start_log = try_start(app_dir)
+        ok, start_log, has_db = try_start(app_dir)
         log += "\n" + start_log
+    if ok and not has_db and llm.provider():
+        # The app runs but stored nothing: usually the start command skipped its set-up code.
+        progress("The application started but created no database. Trying a corrected start command")
+        fixed = propose_config(root, feedback=NO_DATABASE, previous=text)["config"]
+        fixed_dir = (root / fixed["app_dir"]).resolve()
+        if fixed["start"] and fixed_dir.is_dir() and to_yaml(fixed) != text:
+            write_config(fixed_dir, fixed)
+            ok2, _ = prepare(fixed_dir, fixed, progress)
+            ok2, _, has_db2 = try_start(fixed_dir) if ok2 else (False, "", False)
+            if ok2 and has_db2:
+                log += "\nThe start command was corrected automatically so that the application creates its database."
+                return dict(setup, status="ready", yaml=to_yaml(fixed), log=log[-3000:], adjusted=True), str(fixed_dir)
+            write_config(app_dir, cfg)  # the correction did not help: keep what the user confirmed
     if ok:
+        if not has_db:
+            log += ("\nNote: the application started but has not created a SQLite database yet. "
+                    "Analysis needs one. If analysis stops, check the start command above.")
         return dict(setup, status="ready", log=log[-3000:]), str(app_dir)
     setup.update(status="failed", log=log[-3000:])
     if llm.provider():  # look for a corrected configuration; the user still has to confirm it
@@ -294,6 +311,9 @@ async def setup_project(request: Request, project_id: int):
         setup, app_dir = _setup_project(project, text, progress)
         store.run("UPDATE projects SET setup_json = ?, app_dir = ? WHERE id = ?",
                   json.dumps(setup), app_dir or project["app_dir"], project_id)
+        if setup["status"] == "ready" and setup.get("adjusted"):
+            return page(project_id, "The application installs and starts. The start command was corrected "
+                                    "automatically (see step 0). Click Analyze.")
         if setup["status"] == "ready":
             return page(project_id, "The application installs and starts. Click Analyze.")
         hint = " A corrected configuration is shown below. Check it and try again." if setup.get("suggestion") else ""

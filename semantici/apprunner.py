@@ -93,8 +93,10 @@ def declared_db(app_dir, cfg):
 def resolve_db(app_dir, cfg):
     """The app's SQLite file: the configured path, else the most recently written one in the repository."""
     declared = declared_db(app_dir, cfg)
-    if declared:
-        return declared if declared.exists() else None
+    if declared and declared.exists():
+        return declared
+    if declared and (cfg.get("database") or {}).get("reset", "delete") == "delete":
+        return None  # hand-written configuration: trust the stated path only
     found = {}
     for root in {Path(app_dir).resolve(), repo_root(app_dir)}:
         for folder, dirs, files in os.walk(root):

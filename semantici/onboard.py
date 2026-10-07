@@ -13,7 +13,15 @@ from pathlib import Path
 import yaml
 
 from . import llm
-from .apprunner import CONFIG_NAME, SKIP_DIRS, VENV, AppStartError, load_config, run_env, start_app, stop_app
+import httpx
+
+from .apprunner import (CONFIG_NAME, SKIP_DIRS, VENV, AppStartError, load_config, resolve_db, run_env, start_app,
+                        stop_app)
+
+NO_DATABASE = ("The application started and answered HTTP requests, but it did not create any SQLite database file. "
+               "The start command probably skips initialisation code, for example an `if __name__ == '__main__':` "
+               "block that calls init_db(). Use a start command that runs that code (such as `python app.py`) and "
+               "set \"port\" to the port that file listens on.")
 
 KEY_FILES = re.compile(
     r"^(readme.*|package\.json|requirements.*\.txt|pyproject\.toml|pipfile|setup\.py|manage\.py|dockerfile|"
@@ -80,6 +88,10 @@ Rules:
 - If the port is read from an environment variable, put it in "env" as "{{port}}" (for example
   {{"PORT": "{{port}}"}}). If the port is hard-coded in the source, set "port" to that number.
 - Never use auto-reload or debug-reload options.
+- IMPORTANT: if the main file creates tables or seeds data inside an `if __name__ == "__main__":` block
+  (for example it calls init_db() there), the start command MUST run that file directly
+  ("python app.py"), because "flask run" and "uvicorn" skip that block and the database is never created.
+  In that case set "port" to the port the file listens on (Flask's default is 5000).
 - Python: "install" uses "pip install -r requirements.txt" or "pip install <packages>". A virtual
   environment is already active. For Django add "python manage.py migrate" as the last install command.
 - Node.js: "install" is "npm install" (plus a build or migration command only if the server needs it).
@@ -233,10 +245,15 @@ def write_config(app_dir, cfg):
 
 
 def try_start(app_dir) -> tuple:
-    """Starts the app once to prove the configuration works."""
+    """Starts the app once to prove the configuration works. Returns (started, message, database_found)."""
     try:
-        app = start_app(app_dir, load_config(app_dir))
+        cfg = load_config(app_dir)
+        app = start_app(app_dir, cfg)
     except AppStartError as e:
-        return False, str(e)
+        return False, str(e), False
+    try:
+        httpx.get(app.base_url + "/", timeout=10)  # some apps create their database on the first request
+    except httpx.HTTPError:
+        pass
     stop_app(app)
-    return True, "Application started and answered HTTP requests."
+    return True, "Application started and answered HTTP requests.", resolve_db(app_dir, cfg) is not None
