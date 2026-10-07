@@ -67,7 +67,7 @@ def complete_json(prompt: str) -> dict:
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
                     },
-                    timeout=120,
+                    timeout=60,
                 )
                 break
             except httpx.HTTPError:
@@ -85,7 +85,7 @@ def complete_json(prompt: str) -> dict:
                 "response_format": {"type": "json_object"},
                 "temperature": 0.1,
             },
-            timeout=120,
+            timeout=60,
         )
         text = r.json()["choices"][0]["message"]["content"]
     else:

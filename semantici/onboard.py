@@ -176,7 +176,11 @@ def propose_config(root, feedback: str = "", previous: str = "") -> dict:
         note = ""
         if feedback:
             note = (f"\nA previous attempt used this configuration:\n{previous}\n"
-                    f"It FAILED with this output:\n{feedback[-3000:]}\nFix the configuration.\n")
+                    f"It FAILED with this output:\n{feedback[-3000:]}\nFix the configuration. Do not return the "
+                    "same configuration again. If pinned package versions failed to build or install, replace "
+                    "'pip install -r requirements.txt' with one 'pip install <names>' command that lists only the "
+                    "packages the application imports at run time, WITHOUT version pins, leaving out linters, "
+                    "formatters and test tools.\n")
         try:
             reply = llm.complete_json(PROMPT.format(snapshot=snapshot(root), feedback=note))
             cfg = normalize(reply)

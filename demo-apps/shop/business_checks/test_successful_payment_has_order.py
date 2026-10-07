@@ -2,7 +2,7 @@
 
 Invariant : successful-payment-has-order (critical)
 Rule      : Every successful payment must be linked to exactly one order.
-Origin    : violation confirmed in SemantiCI run #10 on 2026-10-06
+Origin    : violation confirmed in SemantiCI run #15 on 2026-10-07
 """
 from pathlib import Path
 
