@@ -10,4 +10,5 @@ COPY . .
 
 ENV SEMANTICI_HOME=/data
 EXPOSE 8000
-CMD ["python", "-m", "uvicorn", "semantici.web:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hosting platforms such as Render set PORT; locally it stays 8000
+CMD ["sh", "-c", "python -m uvicorn semantici.web:app --host 0.0.0.0 --port ${PORT:-8000}"]
